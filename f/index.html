@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>Clinic PWA — Solo Pediatric OPD</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <link rel="manifest" href="./manifest.json">
+  <meta name="theme-color" content="#17B26A"/>
+  <style>
+    :root{--ink:#0f172a;--muted:#64748b;--line:#e5e7eb;--accent:#17B26A}
+    *{box-sizing:border-box} body{margin:0;background:#fff;color:var(--ink);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Arial}
+    .wrap{max-width:1100px;margin:0 auto;padding:16px}
+    .grid{display:grid;grid-template-columns:1fr;gap:12px}@media(min-width:900px){.grid{grid-template-columns:1fr 1fr}}
+    .card{border:1px solid var(--line);border-radius:14px;padding:14px;background:#fff}
+    a.btn{display:inline-block;padding:12px 14px;border:1px solid var(--line);border-radius:12px;text-decoration:none;color:var(--ink);background:#f8fafc}
+    a.btn:hover{border-color:#cbd5e1}
+    .title{display:flex;justify-content:space-between;align-items:center;gap:10px}
+    .muted{color:var(--muted)}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="title">
+    <h2 style="margin:0">Clinic PWA — Solo Pediatric</h2>
+    <div class="muted" id="swStatus">PWA: not installed</div>
+  </div>
+  <p class="muted">FCFS tokens → OPD → Rx/Pharmacy + Lab. Offline-first via IndexedDB (PouchDB). Optional sync: Google Sheets + CouchDB.</p>
+
+  <div class="grid">
+    <div class="card">
+      <h3>Start</h3>
+      <p><a class="btn" href="./pages/bookings.html" target="_blank">➕ Bookings (with Vitals)</a></p>
+      <p><a class="btn" href="./pages/opd.html" target="_blank">🩺 OPD (prefills vitals)</a></p>
+      <p><a class="btn" href="./pages/tokens.html" target="_blank">🔊 Token Queue</a></p>
+      <p><a class="btn" href="./pages/display.html" target="_blank">🖥️ Display Board</a></p>
+    </div>
+    <div class="card">
+      <h3>Sync & Config</h3>
+      <p class="muted">Edit <code>/scripts/db.js → CONFIG</code>:</p>
+      <ul class="muted">
+        <li><b>CouchDB</b>: set <code>CONFIG.couch.remote</code> (e.g., <code>https://user:pass@host:5984/clinic_</code>)</li>
+        <li><b>Google Sheets</b>: set <code>CONFIG.sheets.readUrl</code> + <code>writeUrl</code></li>
+      </ul>
+      <p>
+        <a class="btn" href="#" id="btnSeed">🌱 Seed Demo</a>
+        <a class="btn" href="#" id="btnPurge">🧹 Purge Local</a>
+      </p>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+  if ('serviceWorker' in navigator) {
+    try {
+      await navigator.serviceWorker.register('./service-worker.js');
+      document.getElementById('swStatus').textContent = 'PWA: ready ✅';
+    } catch(e) {
+      document.getElementById('swStatus').textContent = 'PWA: SW failed';
+      console.warn(e);
+    }
+  }
+  const db = await import('./scripts/db.js');
+  document.getElementById('btnSeed').onclick = async ()=>{ await db.seedDemo(); alert('Seeded. Open Bookings.'); };
+  document.getElementById('btnPurge').onclick = async ()=>{ if(confirm('Delete ALL local data?')){ await db.purgeAll(); alert('Purged.'); } };
+</script>
+</body>
+</html>

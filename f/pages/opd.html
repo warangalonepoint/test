@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>OPD · Clinic PWA</title>
+<link rel="manifest" href="../manifest.json"/>
+<style>
+:root{--brand:#17B26A;--ink:#0f172a;--muted:#64748b;--line:#e5e7eb;--card:#fff;--r:16px}
+*{box-sizing:border-box}body{margin:0;background:#fff;color:var(--ink);font:14px/1.45 system-ui}
+.wrap{max-width:900px;margin:auto;padding:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:14px;margin:10px 0}
+.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:10px}
+.c12{grid-column:span 12}.c6{grid-column:span 6}.c4{grid-column:span 4}.c3{grid-column:span 3}.c2{grid-column:span 2}
+label{font-size:11px;color:var(--muted);display:block;margin-bottom:4px}
+input,textarea{width:100%;padding:10px;border-radius:12px;border:1px solid #e5e7eb;background:#fff}
+.btn{border:0;border-radius:12px;padding:10px 14px;font-weight:700;cursor:pointer;background:#f8fafc}
+.primary{background:var(--brand);color:#fff}
+.badge{background:#ecfeff;color:#0369a1;border-radius:999px;padding:6px 10px;font-weight:700;font-size:12px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.muted{color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="row">
+    <h2 style="margin:0">OPD</h2>
+    <span id="tokenBadge" class="badge"></span>
+  </div>
+
+  <div class="card">
+    <h3 style="margin:0 0 8px 0">Patient</h3>
+    <div class="grid">
+      <div class="c3"><label>PID</label><input id="pPID" readonly/></div>
+      <div class="c5"><label>Name</label><input id="pName"/></div>
+      <div class="c2"><label>Sex</label><input id="pSex"/></div>
+      <div class="c2"><label>DOB</label><input id="pDOB" type="date"/></div>
+      <div class="c4"><label>Phone</label><input id="pPhone"/></div>
+      <div class="c8"><label>Reason</label><input id="pReason"/></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin:0 0 8px 0">Vitals</h3>
+    <div class="grid">
+      <div class="c3"><label>Height (cm)</label><input id="vtHeight" type="number" step="0.1"/></div>
+      <div class="c3"><label>Weight (kg)</label><input id="vtWeight" type="number" step="0.01"/></div>
+      <div class="c2"><label>Temp (°C)</label><input id="vtTemp" type="number" step="0.1"/></div>
+      <div class="c2"><label>Pulse (bpm)</label><input id="vtPulse" type="number" step="1"/></div>
+      <div class="c2"><label>SpO₂ (%)</label><input id="vtSpO2" type="number" step="1"/></div>
+    </div>
+    <div class="grid" style="margin-top:8px">
+      <div class="c2"><label>Resp (/min)</label><input id="vtRR" type="number" step="1"/></div>
+      <div class="c2"><label>BP Sys</label><input id="vtBPS" type="number" step="1"/></div>
+      <div class="c2"><label>BP Dia</label><input id="vtBPD" type="number" step="1"/></div>
+      <div class="c3"><label>MUAC (cm)</label><input id="vtMUAC" type="number" step="0.1"/></div>
+      <div class="c3"><label>Head Circ (cm)</label><input id="vtHC" type="number" step="0.1"/></div>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <span class="muted">BMI: <b id="bmi">—</b></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin:0 0 8px 0">Assessment</h3>
+    <div class="grid">
+      <div class="c12"><label>Notes</label><textarea id="opdNotes" rows="4" placeholder="Clinical notes, impressions..."></textarea></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button id="btnSave" class="btn primary">Save OPD</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import {
+  pouch, todayISO, getBookingByToken, getLatestVitals, startSync
+} from '../scripts/db.js';
+
+const $=s=>document.querySelector(s);
+await startSync();
+
+const qs = new URLSearchParams(location.search);
+const token = qs.get('token') || qs.get('fromToken') || '';
+if(token) $('#tokenBadge').textContent = token;
+
+// Load booking & patient
+const booking = token ? await getBookingByToken(token) : null;
+if (booking){
+  $('#pPID').value = booking.pid || '';
+  $('#pName').value = booking.name || '';
+  $('#pPhone').value = booking.phone || '';
+  $('#pDOB').value = booking.dob || '';
+  $('#pSex').value = booking.sex || '';
+  $('#pReason').value = booking.reason || '';
+}
+
+// Prefill latest vitals (Token → PID)
+const latest = await getLatestVitals(booking?.pid || '', token);
+if (latest){
+  const H = latest.Height ?? latest.HeightCm ?? latest.heightCm ?? latest.height ?? null;
+  const W = latest.Weight ?? latest.WeightKg ?? latest.weightKg ?? latest.weight ?? null;
+  const T = latest.Temp ?? latest.TempC ?? latest.tempC ?? latest.temp ?? null;
+  const P = latest.Pulse ?? latest.PulseBpm ?? latest.pulseBpm ?? latest.pulse ?? null;
+  const S = latest.SpO2 ?? latest.SpO2Pct ?? latest.spo2Pct ?? null;
+
+  if(H!=null) $('#vtHeight').value = Number(H);
+  if(W!=null) $('#vtWeight').value = Number(W);
+  if(T!=null) $('#vtTemp').value   = Number(T);
+  if(P!=null) $('#vtPulse').value  = Number(P);
+  if(S!=null) $('#vtSpO2').value  = Number(S);
+  recalcBMI();
+}
+
+function recalcBMI(){
+  const h = parseFloat($('#vtHeight').value||'');
+  const w = parseFloat($('#vtWeight').value||'');
+  if (h>0 && w>0){
+    const bmi = w / Math.pow(h/100,2);
+    $('#bmi').textContent = bmi.toFixed(2);
+  } else {
+    $('#bmi').textContent = '—';
+  }
+}
+['vtHeight','vtWeight'].forEach(id=>$('#'+id).addEventListener('input', recalcBMI));
+
+// Save OPD
+$('#btnSave').onclick = async ()=>{
+  const oid = `OPD::${todayISO()}::${token||('T'+Date.now())}`;
+  const opd = {
+    _id: oid, Type:'OPD',
+    Date: todayISO(),
+    Token: token || '',
+    PID: $('#pPID').value || '',
+    PatientName: $('#pName').value || '',
+    Phone: $('#pPhone').value || '',
+    Reason: $('#pReason').value || '',
+    Notes: $('#opdNotes').value || '',
+    Vitals: {
+      HeightCm: num($('#vtHeight').value),
+      WeightKg: num($('#vtWeight').value),
+      TempC: num($('#vtTemp').value),
+      PulseBpm: num($('#vtPulse').value),
+      SpO2Pct: num($('#vtSpO2').value),
+      RespRate: num($('#vtRR').value),
+      BPSys: num($('#vtBPS').value),
+      BPDia: num($('#vtBPD').value),
+      MUACCm: num($('#vtMUAC').value),
+      HeadCircCm: num($('#vtHC').value),
+      BMI: $('#bmi').textContent
+    },
+    Status:'Open',
+    UpdatedAt: new Date().toISOString()
+  };
+  try{
+    const ex = await pouch.opdDB.get(oid).catch(()=>null);
+    if(ex) opd._rev = ex._rev;
+    await pouch.opdDB.put(opd);
+    alert('OPD saved ✓');
+  }catch(e){
+    alert('Failed to save OPD: '+e.message);
+  }
+};
+
+function num(v){ const x=String(v||'').trim(); if(!x) return null; const n=Number(x); return Number.isFinite(n)?n:null; }
+</script>
+</body>
+</html>
