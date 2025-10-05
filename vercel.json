@@ -1,8 +1,5 @@
-{{
-  "rewrites": [...],
-  "routes": [...]
-  // The 'builds' property has been removed
+{
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
 }
-
-}
-
