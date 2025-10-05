@@ -15,7 +15,7 @@ export function mountNav(active = '') {
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
           <a class="btn ghost" href="/dashboard.html">Dashboard</a>
           <a class="btn ghost" href="/bookings.html">Bookings</a>
-          <a class="btn ghost" href="/OPD.html">OPD</a>
+          <a class="btn ghost" href="/opd.html">OPD</a>
           <a class="btn ghost" href="/pharmacy.html">Pharmacy</a>
           <a class="btn ghost" href="/lab-hub.html">Lab</a>
           <a class="btn ghost" href="/backup.html">Backup</a>
