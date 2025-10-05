@@ -1,20 +1,7 @@
 {
   "version": 2,
-  "builds": [{ "src": "**/*", "use": "@vercel/static" }],
   "cleanUrls": true,
-  "routes": [
-    { "src": "^/$", "dest": "/index.html" },
-
-    { "src": "^/opd(?:\\.html)?$", "dest": "/OPD.html" },
-    { "src": "^/pharmacy-sale(?:\\.html)?$", "dest": "/pharmacy-sales.html" },
-
-    { "src": "^/dashboard$", "dest": "/dashboard.html" },
-    { "src": "^/bookings$", "dest": "/bookings.html" },
-    { "src": "^/patients$", "dest": "/patients.html" },
-    { "src": "^/pharmacy$", "dest": "/pharmacy.html" },
-    { "src": "^/pharmacy-queue$", "dest": "/pharmacy-queue.html" },
-    { "src": "^/lab$", "dest": "/lab.html" },
-    { "src": "^/lab-hub$", "dest": "/lab-hub.html" },
-    { "src": "^/backup$", "dest": "/backup.html" }
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
