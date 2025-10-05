@@ -1,9 +1,7 @@
 {
-  "root": "starter",
-  "public": "starter",
   "cleanUrls": true,
   "trailingSlash": false,
   "redirects": [
-    { "source": "/", "destination": "/dashboard.html", "permanent": false }
+    { "source": "/", "destination": "/index.html", "permanent": false }
   ]
 }
