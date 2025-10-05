@@ -1,0 +1,72 @@
+/* Pastel gradients + compact tile grid (lavender → pink → amber → teal → violet) */
+
+.gradient{
+  border-radius:18px;
+  border:1px solid #e5e7eb;
+  box-shadow:0 6px 20px rgba(0,0,0,.06);
+}
+.g-lav   { background:linear-gradient(180deg,#eef2ff 0%,#ede9fe 100%); }  /* lavender */
+.g-pink  { background:linear-gradient(180deg,#ffe4f1 0%,#fce7f3 100%); }  /* pink */
+.g-amber { background:linear-gradient(180deg,#fff4cc 0%,#fef3c7 100%); }  /* amber */
+.g-teal  { background:linear-gradient(180deg,#e6fffb 0%,#dcfce7 100%); }  /* teal */
+.g-violet{ background:linear-gradient(180deg,#ede9fe 0%,#e0e7ff 100%); }  /* violet */
+
+/* Compact tile grid */
+.tiles{ display:grid; gap:12px; grid-template-columns:repeat(3,minmax(220px,1fr)); }
+@media (max-width:1024px){ .tiles{ grid-template-columns:repeat(3,minmax(180px,1fr)); } }
+@media (max-width:820px) { .tiles{ grid-template-columns:repeat(2,minmax(180px,1fr)); } }
+@media (max-width:480px) { .tiles{ grid-template-columns:1fr; } }
+
+.tile{
+  display:block;
+  padding:16px 18px;
+  border-radius:16px;
+  border:1px solid #e5e7eb;
+  color:#111;
+  text-decoration:none;
+  background:#fff; /* overridden when .gradient + .g-* are present */
+  box-shadow:0 6px 20px rgba(0,0,0,.06);
+  transition:transform .08s ease, box-shadow .12s ease;
+}
+.tile:hover{ transform:translateY(-2px); box-shadow:0 10px 24px rgba(0,0,0,.08); }
+.tile h3{ margin:0 0 4px; font-size:16px; }
+.tile p { margin:0; font-size:13px; opacity:.75; }
+
+/* ========== Minimal brand layer (no DOM changes) ========== */
+/* Put your images here: /public/assets/logo.png and /public/assets/banner.jpg */
+:root{
+  --logo-url: url("../public/assets/logo.png");
+  --banner-url: url("../public/assets/banner.jpg");
+}
+
+/* Small logo inside existing top nav */
+#nav{ position:relative; }
+#nav::before{
+  content:"";
+  position:absolute;
+  left:10px; top:8px;
+  width:32px; height:32px;
+  background-image: var(--logo-url);
+  background-size:cover; background-position:center;
+  border-radius:8px; border:1px solid #e5e7eb;
+  box-shadow:0 2px 8px rgba(0,0,0,.08);
+}
+
+/* Soft app-wide background + subtle banner watermark */
+body{
+  background:
+    radial-gradient(1200px 600px at 10% -10%, #eef2ff 0%, transparent 60%),
+    radial-gradient(1000px 500px at 110% 0%, #ffe4f1 0%, transparent 55%),
+    #fafafa;
+}
+body::after{
+  content:"";
+  position:fixed; inset:0;
+  background-image: var(--banner-url);
+  background-size:cover; background-position:center;
+  opacity:.05; pointer-events:none; z-index:-1;
+}
+
+/* Utilities used around the app */
+.header-row{ display:flex; align-items:center; gap:10px; }
+.header-row .sp{ flex:1; }

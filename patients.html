@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Patients Hub · Clinic PWA</title>
+<link rel="stylesheet" href="/styles/styles.css"/>
+<link rel="stylesheet" href="/styles/pastels.css?v=4"/>
+<script defer src="https://cdn.jsdelivr.net/npm/dexie@4.0.8/dist/dexie.min.js"></script>
+<script type="module">
+import { seed } from '/scripts/db.js';
+import { requireRole } from '/scripts/auth.js';
+import { mountNav } from '/scripts/ui.js';
+seed(); requireRole(['doctor','supervisor','front']);
+window.addEventListener('DOMContentLoaded', ()=>{ mountNav('patients'); });
+</script>
+<style>
+:root { --brand:#F59E0B }
+.wrap.grid{gap:12px}
+.tile-grid {
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+  gap:14px;
+}
+.tile {
+  border-radius:18px;
+  padding:20px;
+  color:#0f172a;
+  text-align:center;
+  transition:transform .2s ease, box-shadow .2s ease;
+}
+.tile:hover {
+  transform:translateY(-3px);
+  box-shadow:0 8px 20px rgba(0,0,0,0.08);
+}
+.tile h3 {
+  margin:8px 0;
+  font-size:18px;
+  font-weight:600;
+}
+.tile p {
+  font-size:13px;
+  color:#475569;
+  margin-bottom:10px;
+}
+.tile a {
+  display:inline-block;
+  margin-top:6px;
+  padding:6px 12px;
+  border-radius:8px;
+  background:#0f172a;
+  color:#fff;
+  text-decoration:none;
+  font-size:13px;
+}
+</style>
+</head>
+<body>
+<div id="nav"></div>
+
+<div class="wrap">
+  <div class="header-row" style="padding:4px 2px">
+    <button id="btnBack" class="btn ghost" onclick="history.back()">← Back</button>
+  </div>
+
+  <h2>Patients Hub</h2>
+  <div class="tile-grid">
+    <div class="tile gradient g-lav">
+      <h3>OPD Records</h3>
+      <p>Add or edit today’s OPD visit for a patient.</p>
+      <a href="/opd.html">Open OPD</a>
+    </div>
+    <div class="tile gradient g-pink">
+      <h3>Patient History</h3>
+      <p>See past visits, vitals, and prescriptions.</p>
+      <a href="/patients-history.html">Open History</a>
+    </div>
+  </div>
+</div>
+</body>
+</html>

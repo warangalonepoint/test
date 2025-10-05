@@ -1,0 +1,135 @@
+<!doctype html><html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>Pharmacy Return · Print</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<link rel="stylesheet" href="../styles/styles.css"/>
+<script defer src="https://cdn.jsdelivr.net/npm/dexie@4.0.8/dist/dexie.min.js"></script>
+<style>
+  body{ background:#fafafa; }
+  .sheet{ max-width: 650px; margin: 12px auto; background:#fff; padding:16px 18px; box-shadow:0 1px 6px rgba(0,0,0,.08); position:relative }
+  .head{ display:flex; justify-content:space-between; align-items:flex-start; gap:12px }
+  h1{ font-size:18px; margin:0 0 2px 0 }
+  .muted{ color:#6b7280 }
+  .badge{ padding:2px 8px; border-radius:999px; background:#fee2e2; color:#991b1b; font-size:12px; font-weight:600 }
+  table{ width:100%; border-collapse:collapse; margin-top:10px }
+  th,td{ border-bottom:1px dashed #e5e7eb; padding:6px 6px; font-size:13px; vertical-align:top }
+  .right{text-align:right}
+  .foot{ margin-top:10px; display:flex; justify-content:space-between; align-items:flex-end; gap:10px }
+  .sign{ border-top:1px solid #e5e7eb; padding-top:4px; text-align:right; min-width:180px }
+  .watermark{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; pointer-events:none; opacity:.06; font-weight:800; font-size:48px; letter-spacing:.15em }
+  .toolbar{ display:flex; gap:8px; justify-content:flex-end; margin:10px auto; max-width:650px }
+  @media print{
+    body{ background:#fff }
+    .toolbar{ display:none }
+    .sheet{ box-shadow:none; margin:0; max-width:100%; padding:8mm 10mm }
+  }
+</style>
+<script type="module">
+import { db, seed } from '../scripts/db.js';
+seed();
+
+const $=s=>document.querySelector(s);
+window.addEventListener('DOMContentLoaded', async ()=>{
+  const id = await getInvoiceId();
+  await render(id);
+  const auto = new URLSearchParams(location.search).get('auto');
+  if(auto==='1') window.print();
+});
+
+async function getInvoiceId(){
+  let id = localStorage.getItem('printInvoiceId');
+  if(!id){ id = prompt('Enter return invoice ID:'); }
+  if(!id) throw new Error('No invoice id');
+  return +id;
+}
+
+function taxSplit(base, gstPct){
+  const tax = +(base * (gstPct/100)).toFixed(2);
+  const half = +(tax/2).toFixed(2);
+  return {sgst:half,cgst:half,tax,gross:+(base+tax).toFixed(2)};
+}
+
+async function render(invoiceId){
+  const inv = await db.invoices.get(invoiceId);
+  if(!inv){ $('.sheet').innerHTML='<p>Invoice not found.</p>'; return; }
+  const items = await db.invoiceItems.where('invoiceId').equals(invoiceId).toArray();
+
+  $('#h-title').textContent = 'RETURN INVOICE';
+  $('#h-sub').textContent = `#${invoiceId} • ${inv.date}${inv.returnOfInvoiceId?` • of #${inv.returnOfInvoiceId}`:''}`;
+
+  const tbody = $('#rows'); tbody.innerHTML='';
+  let taxable=0, sgst=0, cgst=0, total=0;
+
+  items.forEach((it,idx)=>{
+    const base = (+it.rate||0) * (+it.qty||0); // qty negative expected
+    const t = taxSplit(base, +it.gstPct||0);
+    taxable += base; sgst += t.sgst; cgst += t.cgst; total += t.gross;
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${idx+1}</td>
+      <td>
+        <div><b>${it.name||''}</b></div>
+        <div class="muted">Batch: ${it.batch||'-'} · Exp: ${(it.expiry||'').slice(0,10)||'-'}</div>
+        ${it.note?`<div class="muted">${it.note}</div>`:''}
+      </td>
+      <td class="right">${(+it.qty||0).toFixed(0)}</td>
+      <td class="right">₹${(+it.rate||0).toFixed(2)}</td>
+      <td class="right">${(+it.gstPct||0).toFixed(0)}%</td>
+      <td class="right">₹${t.sgst.toFixed(2)}</td>
+      <td class="right">₹${t.cgst.toFixed(2)}</td>
+      <td class="right">₹${t.gross.toFixed(2)}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  $('#t-taxable').textContent = taxable.toFixed(2);
+  $('#t-sgst').textContent = sgst.toFixed(2);
+  $('#t-cgst').textContent = cgst.toFixed(2);
+  $('#t-total').textContent = (total).toFixed(2);
+}
+</script>
+</head>
+<body>
+<div class="toolbar">
+  <button class="btn" onclick="window.print()">Print</button>
+  <button class="btn ghost" onclick="history.back()">Back</button>
+</div>
+
+<div class="sheet">
+  <div class="watermark">CLINIC</div>
+  <div class="head">
+    <div>
+      <h1>Clinic Name</h1>
+      <div class="muted small">Address line, City · Phone</div>
+    </div>
+    <div style="text-align:right">
+      <div id="h-title" class="badge">RETURN INVOICE</div>
+      <div id="h-sub" class="muted small"></div>
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>#</th><th>Item</th><th class="right">Qty</th><th class="right">Rate</th>
+        <th class="right">GST%</th><th class="right">SGST</th><th class="right">CGST</th><th class="right">Amount</th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+    <tfoot>
+      <tr><td colspan="7" class="right">Taxable</td><td class="right">₹ <span id="t-taxable">0.00</span></td></tr>
+      <tr><td colspan="7" class="right">SGST</td><td class="right">₹ <span id="t-sgst">0.00</span></td></tr>
+      <tr><td colspan="7" class="right">CGST</td><td class="right">₹ <span id="t-cgst">0.00</span></td></tr>
+      <tr><td colspan="7" class="right"><b>Total</b></td><td class="right"><b>₹ <span id="t-total">0.00</span></b></td></tr>
+    </tfoot>
+  </table>
+
+  <div class="foot">
+    <div class="muted small">Thank you for visiting • Return processed • Authorized Signatory</div>
+    <div class="sign small">Signature</div>
+  </div>
+</div>
+</body>
+</html>

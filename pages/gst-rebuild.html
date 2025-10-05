@@ -1,0 +1,103 @@
+<!doctype html><html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>GST Month Rebuild · Clinic PWA</title>
+<link rel="stylesheet" href="/styles/styles.css"/>
+<script defer src="https://cdn.jsdelivr.net/npm/dexie@4.0.8/dist/dexie.min.js"></script>
+<script type="module">
+import { requireRole } from '/scripts/auth.js';
+import { mountNav } from '/scripts/ui.js';
+import { db } from '/scripts/db.js';
+
+requireRole(['doctor','supervisor']);
+mountNav('pages');
+
+const fx = n => (Number(n)||0).toFixed(2);
+
+function ym(d){ return d.toISOString().slice(0,7); }
+function rangeForYM(yearMonth){
+  const [y,m]=yearMonth.split('-').map(Number);
+  return {start:new Date(y,m-1,1), end:new Date(y,m,1)};
+}
+
+async function gather(yearMonth, type='all'){
+  const {start,end}=rangeForYM(yearMonth);
+  let rows = await db.invoices.toArray();
+  rows = rows.filter(r=>{
+    const d=new Date(r.date||''); return d>=start && d<end;
+  });
+  if(type!=='all') rows = rows.filter(r=>r.type===type);
+
+  const byRate=new Map(); let grand=0;
+  for(const r of rows){
+    const items=await db.invoiceItems.where('invoiceId').equals(r.id).toArray();
+    for(const it of items){
+      const rate=+it.taxRate||0;
+      const taxable=(+it.rate||0)*(+it.qty||0)*(1-((+it.discount||0)/100));
+      const sgst=+it.sgst||0, cgst=+it.cgst||0, tax=sgst+cgst;
+      if(!byRate.has(rate)) byRate.set(rate,{taxable:0,sgst:0,cgst:0,tax:0});
+      const b=byRate.get(rate);
+      b.taxable+=taxable; b.sgst+=sgst; b.cgst+=cgst; b.tax+=tax;
+      grand+=(+it.amount||0);
+    }
+  }
+  return {byRate, grand, rows};
+}
+
+function toCSV(byRate, yearMonth, type){
+  const head=['Month','Type','GST%','Taxable','SGST','CGST','Total GST'];
+  const lines=[head.join(',')];
+  for(const [rate,b] of [...byRate.entries()].sort((a,b)=>a[0]-b[0])){
+    lines.push([yearMonth,type,rate,fx(b.taxable),fx(b.sgst),fx(b.cgst),fx(b.tax)].join(','));
+  }
+  return lines.join('\n')+'\n';
+}
+
+async function rebuildAll(){
+  const invs=await db.invoices.toArray();
+  if(!invs.length){ alert('No invoices in DB'); return; }
+  const months=[...new Set(invs.map(i=>ym(new Date(i.date||''))))].sort();
+  let zipLines=[];
+  for(const m of months){
+    const types=['all','sale','purchase','return','combined'];
+    for(const t of types){
+      const {byRate}=await gather(m,t);
+      if(byRate.size){
+        const csv=toCSV(byRate,m,t);
+        const filename=`gst-${m}-${t}.csv`;
+        zipLines.push({name:filename,data:csv});
+      }
+    }
+  }
+  if(!zipLines.length){ alert('No GST data to export'); return; }
+  // Build zip on the fly
+  const zipParts = [];
+  for(const f of zipLines){
+    zipParts.push(`---FILE:${f.name}---\n${f.data}\n`);
+  }
+  const blob=new Blob(zipParts,{type:'text/plain'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='gst-rebuild.txt'; // all csvs in one txt for simplicity
+  a.click();
+  document.getElementById('out').textContent=`Exported ${zipLines.length} files (${months.length} months)`;
+}
+
+window.addEventListener('DOMContentLoaded', ()=>{
+  document.getElementById('rebuild').addEventListener('click', rebuildAll);
+});
+</script>
+</head>
+<body>
+<div id="nav"></div>
+<div class="wrap grid">
+  <div class="card">
+    <h2>Rebuild GST Months</h2>
+    <p class="small">This will walk through all invoices in IndexedDB and generate per-month CSV summaries (All, Sales, Purchases, Returns, Combined). Files will be merged into one text download.</p>
+    <button class="btn" id="rebuild">Rebuild &amp; Export</button>
+    <div id="out" class="small" style="margin-top:6px"></div>
+  </div>
+</div>
+</body>
+</html>
