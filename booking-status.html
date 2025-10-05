@@ -1,14 +1,180 @@
-<!doctype html><html><head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Booking Status · Clinic PWA</title>
-<link rel="stylesheet" href="/styles/styles.css"/>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Bookings · Status</title>
+
+<link rel="stylesheet" href="./styles/styles.css"/>
+<link rel="stylesheet" href="./styles/pastels.css?v=4"/>
 <script defer src="https://cdn.jsdelivr.net/npm/dexie@4.0.8/dist/dexie.min.js"></script>
+
+<style>
+  .small{font-size:12px}.muted{opacity:.7}.right{text-align:right}
+  .row-gap{gap:10px}
+  .kpi{padding:8px 10px;border-radius:10px;border:1px solid #eef;background:var(--card,#fff)}
+  .chip{padding:4px 10px;border-radius:999px;border:1px solid #e5e7eb;background:#f8fafc;cursor:pointer}
+  .chip.active{background:#eef2ff}
+  .status-pill{padding:2px 8px;border-radius:999px;font-size:12px}
+  .s-scheduled{background:#e0f2fe;color:#075985}
+  .s-checkedin{background:#dcfce7;color:#166534}
+  .s-completed{background:#ede9fe;color:#5b21b6}
+  .s-cancelled{background:#fee2e2;color:#991b1b}
+  .table td,.table th{font-size:13px}
+</style>
+
 <script type="module">
-  import { seed } from '/scripts/db.js';
-  import { requireRole } from '/scripts/auth.js';
-  import { mountNav } from '/scripts/ui.js';
-  seed(); requireRole(['doctor','supervisor','front']);
-  window.addEventListener('DOMContentLoaded', ()=>mountNav('booking-status'));
+import { db, seed } from './scripts/db.js';
+import { requireRole } from './scripts/auth.js';
+import { mountNav } from './scripts/ui.js';
+import { fmt } from './scripts/utils.js';
+
+seed(); requireRole(['doctor','supervisor','front']);
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+
+let currentDate = null;      // YYYY-MM-DD
+let q = '';                  // search
+let filter = 'all';          // all | scheduled | checked-in | completed | cancelled
+let rows = [];               // list for the day
+
+window.addEventListener('DOMContentLoaded', async ()=>{
+  mountNav('bookings');
+
+  currentDate = fmt.date();
+  const d = $('#date'); d.value=currentDate;
+  d.addEventListener('change', ()=>{ currentDate=d.value||fmt.date(); refresh(); });
+
+  $('#q').addEventListener('input', ()=>{ q=$('#q').value.trim().toLowerCase(); paint(); });
+
+  $$('#filters .chip').forEach(ch=>{
+    ch.addEventListener('click', ()=>{
+      $$('#filters .chip').forEach(x=>x.classList.remove('active'));
+      ch.classList.add('active');
+      filter = ch.dataset.f || 'all';
+      paint();
+    });
+  });
+
+  await refresh();
+});
+
+async function refresh(){
+  try{
+    rows = await db.bookings.where('date').equals(currentDate).toArray();
+    // normalize status + sort by token (fallback id)
+    rows = rows.map(r=>({ ...r, status:(r.status||'scheduled').toLowerCase() }))
+               .sort((a,b)=>{
+                 // tokens like "#01", "#O02" -> sort by id if token missing
+                 if(a.token && b.token) return String(a.token).localeCompare(String(b.token));
+                 return (+a.id||0) - (+b.id||0);
+               });
+  }catch{ rows=[]; }
+  paint();
+}
+
+function paint(){
+  // kpis
+  const totals = { all: rows.length, scheduled:0, 'checked-in':0, completed:0, cancelled:0 };
+  rows.forEach(r=>{ if(totals[r.status]!=null) totals[r.status]++; });
+  $('#kAll').textContent=totals.all; $('#kSch').textContent=totals.scheduled;
+  $('#kIn').textContent=totals['checked-in']; $('#kDone').textContent=totals.completed;
+  $('#kCan').textContent=totals.cancelled;
+
+  // filter + search (pid/name/phone/token/type)
+  let view = rows;
+  if(filter!=='all') view=view.filter(r=>r.status===filter);
+  if(q){
+    view=view.filter(r=>{
+      return (r.patientId||'').toLowerCase().includes(q)
+          || (r.name||'').toLowerCase().includes(q)
+          || (r.phone||'').toLowerCase().includes(q)
+          || (r.token||'').toLowerCase().includes(q)
+          || (r.type||'').toLowerCase().includes(q);
+    });
+  }
+
+  $('#body').innerHTML = view.length ? view.map(r=>rowHTML(r)).join('')
+    : `<tr><td colspan="7" class="muted">No bookings.</td></tr>`;
+
+  // actions
+  $$('#body [data-action]').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const id = Number(btn.dataset.id);
+      const next = ({checkin:'checked-in', done:'completed', cancel:'cancelled', reset:'scheduled'})[btn.dataset.action];
+      if(!next) return;
+      await db.bookings.update(id, { status: next });
+      await refresh();
+    });
+  });
+}
+
+function rowHTML(r){
+  const pillClass = r.status==='scheduled' ? 's-scheduled'
+                 : r.status==='checked-in' ? 's-checkedin'
+                 : r.status==='completed' ? 's-completed'
+                 : 's-cancelled';
+  return `<tr>
+    <td>${r.token||'-'}</td>
+    <td><b>${r.patientId||''}</b></td>
+    <td>${r.name||''} <span class="muted small">${r.phone?('· '+r.phone):''}</span></td>
+    <td class="small">${r.type||'-'}</td>
+    <td><span class="status-pill ${pillClass}">${r.status}</span></td>
+    <td class="right">
+      <div class="row row-gap" style="justify-content:flex-end">
+        <button class="btn ghost small" data-action="checkin" data-id="${r.id}">Check-in</button>
+        <button class="btn ghost small" data-action="done" data-id="${r.id}">Done</button>
+        <button class="btn ghost small" data-action="cancel" data-id="${r.id}">Cancel</button>
+        <button class="btn ghost small" data-action="reset" data-id="${r.id}">Reset</button>
+      </div>
+    </td>
+  </tr>`;
+}
 </script>
 </head>
-<body><div id="nav"></div><div class="wrap"><div class="card"><h2>Booking Status</h2><p>Coming next.</p></div></div></body></html>
+
+<body>
+<div id="nav"></div>
+
+<div class="wrap grid">
+  <!-- header -->
+  <div class="card gradient g-lav">
+    <div class="row row-gap" style="align-items:end;flex-wrap:wrap">
+      <h2 style="margin:0">Bookings · Status</h2>
+      <div class="sp"></div>
+      <label>Date <input id="date" class="input" type="date"/></label>
+      <label>Search <input id="q" class="input" placeholder="PID / name / phone / token / type"/></label>
+    </div>
+  </div>
+
+  <!-- KPIs -->
+  <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px">
+    <div class="kpi gradient g-amber"><div class="small muted">All</div><div style="font-weight:700" id="kAll">0</div></div>
+    <div class="kpi gradient g-teal"><div class="small muted">Scheduled</div><div style="font-weight:700" id="kSch">0</div></div>
+    <div class="kpi gradient g-pink"><div class="small muted">Checked-in</div><div style="font-weight:700" id="kIn">0</div></div>
+    <div class="kpi gradient g-violet"><div class="small muted">Completed</div><div style="font-weight:700" id="kDone">0</div></div>
+    <div class="kpi gradient g-lav"><div class="small muted">Cancelled</div><div style="font-weight:700" id="kCan">0</div></div>
+  </div>
+
+  <!-- filters -->
+  <div class="card">
+    <div id="filters" class="row row-gap" style="flex-wrap:wrap">
+      <div class="chip active" data-f="all">All</div>
+      <div class="chip" data-f="scheduled">Scheduled</div>
+      <div class="chip" data-f="checked-in">Checked-in</div>
+      <div class="chip" data-f="completed">Completed</div>
+      <div class="chip" data-f="cancelled">Cancelled</div>
+    </div>
+  </div>
+
+  <!-- table -->
+  <div class="card">
+    <table class="table">
+      <thead>
+        <tr><th>Token</th><th>PID</th><th>Patient</th><th>Type</th><th>Status</th><th class="right">Actions</th></tr>
+      </thead>
+      <tbody id="body"></tbody>
+    </table>
+  </div>
+</div>
+</body>
+</html>

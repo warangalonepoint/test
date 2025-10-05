@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>TV Display · Clinic Queue</title>
+<link rel="stylesheet" href="./styles/styles.css"/>
+<script defer src="https://cdn.jsdelivr.net/npm/dexie@4.0.8/dist/dexie.min.js"></script>
+
+<style>
+:root {
+  --lav:#E9D5FF;
+  --pink:#F9A8D4;
+  --amber:#FCD34D;
+  --teal:#99F6E4;
+  --violet:#C4B5FD;
+  --bg:#0f172a;
+  --fg:#f8fafc;
+  --muted:#94a3b8;
+}
+body { background:var(--bg); color:var(--fg); font-family:system-ui, sans-serif; margin:0; }
+.screen { max-width:1400px; margin:auto; padding:16px; }
+.topbar { display:flex; align-items:center; gap:12px; padding:6px 0; border-bottom:1px solid #1e293b; }
+.brand { font-weight:700; font-size:20px; }
+.sp { flex:1 }
+.clock { font-variant-numeric: tabular-nums; opacity:.85 }
+.btn { border:none; background:#1e293b; color:var(--fg); padding:6px 12px; border-radius:8px; cursor:pointer; font-size:14px; }
+.section { margin-top:20px }
+.section h2 { margin:0 0 8px; font-size:22px; color:var(--violet) }
+.muted { color:var(--muted); }
+
+/* Now Serving Tiles */
+.grid-now { display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); }
+.tile-now {
+  border-radius:18px; padding:22px; color:#0f172a;
+  background: linear-gradient(145deg,var(--lav),var(--pink),var(--amber),var(--teal),var(--violet));
+  background-size:400% 400%;
+  animation: gradientShift 14s ease infinite;
+  text-align:center; font-weight:700;
+}
+@keyframes gradientShift {
+  0% {background-position:0% 50%}
+  50% {background-position:100% 50%}
+  100% {background-position:0% 50%}
+}
+.token { font-size:54px; font-weight:800; }
+.sub { font-size:18px; color:#0f172a; margin-top:4px; }
+
+/* Up Next Card */
+.card {
+  background:#1e293b; border:1px solid #334155; border-radius:16px;
+  padding:10px; overflow:hidden; height:360px; position:relative;
+}
+.scroll { position:absolute; top:0; left:0; right:0; will-change:transform; }
+@keyframes scrollUp { from{transform:translateY(0)} to{transform:translateY(-50%)} }
+.table { width:100%; border-collapse:collapse; color:var(--fg); }
+.table td { padding:8px 10px; font-size:20px; border-bottom:1px solid #334155; }
+</style>
+
+<script type="module">
+import { db, seed } from './scripts/db.js';
+import { fmt } from './scripts/utils.js';
+seed();
+
+const $=s=>document.querySelector(s);
+let privacy=true;
+
+const NOW_STATUSES = new Set(['checked-in','in-progress','serving','called']);
+const DONE_STATUSES = new Set(['completed','done','no-show','cancelled']);
+const NEXT_STATUSES = new Set(['scheduled','queued','waiting','pending']);
+
+window.addEventListener('DOMContentLoaded',()=>{
+  $('#togglePriv').onclick=()=>{ privacy=!privacy; render(dataCache); };
+  $('#full').onclick=()=>{ if(!document.fullscreenElement){ document.documentElement.requestFullscreen(); } else { document.exitFullscreen(); } };
+  updateClock();
+  refresh(); setInterval(refresh, 8000); // poll
+});
+
+function updateClock(){
+  $('#clock').textContent=new Date().toLocaleTimeString();
+  setTimeout(updateClock,1000);
+}
+
+let dataCache={now:[], upcoming:[]};
+
+async function refresh(){
+  const today=fmt.date();
+  const all=await db.bookings.where('date').equals(today).toArray().catch(()=>[]);
+  all.forEach(r=>{
+    r.status=(r.status||'').toLowerCase();
+    r.token=r.token||'—';
+    r.name=r.name||'';
+  });
+
+  const now = all
+    .filter(r=>NOW_STATUSES.has(r.status))
+    .sort((a,b)=>(b.ts||0)-(a.ts||0));
+
+  let upcoming = all.filter(r=>!DONE_STATUSES.has(r.status) && !NOW_STATUSES.has(r.status));
+  if(!upcoming.length){ upcoming = all.filter(r=>NEXT_STATUSES.has(r.status)); }
+  upcoming.sort((a,b)=>(a.ts||0)-(b.ts||0) || String(a.token).localeCompare(String(b.token)));
+
+  dataCache={now,upcoming};
+  render(dataCache);
+}
+
+function maskName(n){
+  if(!n) return '';
+  if(!privacy) return n;
+  return n[0].toUpperCase() + '***';
+}
+
+function render({now,upcoming}){
+  // Now Serving
+  $('#now').innerHTML = now.length ? now.map(r=>`
+    <div class="tile-now">
+      <div class="token">${r.token}</div>
+      <div class="sub">${maskName(r.name)}</div>
+    </div>`).join('')
+  : `<div class="muted">No active patients</div>`;
+
+  // Up Next (auto-scroll). Duplicate rows to create loop.
+  if(!upcoming.length){
+    $('#upNext').innerHTML = `<div class="muted" style="padding:12px">No upcoming patients</div>`;
+  }else{
+    const rows = upcoming.map(r=>`<tr><td>${r.token}</td><td>${maskName(r.name)}</td><td class="muted">${r.type||''}</td></tr>`).join('');
+    $('#upNext').innerHTML = `<div class="scroll"><table class="table">${rows}${rows}</table></div>`;
+    const dur = Math.max(20, Math.round(upcoming.length*2.5)); // seconds
+    $('#upNext .scroll').style.animation = `scrollUp ${dur}s linear infinite`;
+  }
+}
+</script>
+</head>
+
+<body>
+<div class="screen">
+  <div class="topbar">
+    <div class="brand">Clinic TV Queue</div>
+    <div class="sp"></div>
+    <button id="togglePriv" class="btn">🫣 Toggle</button>
+    <button id="full" class="btn">⛶ Fullscreen</button>
+    <div id="clock" class="clock"></div>
+  </div>
+
+  <div class="section">
+    <h2>Now Serving</h2>
+    <div id="now" class="grid-now"></div>
+  </div>
+
+  <div class="section">
+    <h2>Up Next</h2>
+    <div id="upNext" class="card"></div>
+  </div>
+
+  <div class="footer">
+    Powered by Onestop AI · All Rights Reserved © 2025
+  </div>
+</div>
+</body>
+</html>
