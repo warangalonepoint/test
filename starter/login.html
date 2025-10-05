@@ -1,0 +1,41 @@
+<!doctype html><html lang="en"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Login · Clinic PWA</title>
+<link rel="stylesheet" href="/styles/styles.css"/>
+<script defer src="https://cdn.jsdelivr.net/npm/dexie@4.0.8/dist/dexie.min.js"></script>
+<script type="module">
+import { seed } from '/scripts/db.js';
+import { login } from '/scripts/auth.js';
+seed();
+window.addEventListener('DOMContentLoaded',()=>{
+  const form=document.querySelector('form');
+  const role=document.getElementById('role');
+  const pin=document.getElementById('pin');
+  const error=document.getElementById('error');
+  form.addEventListener('submit',async e=>{
+    e.preventDefault(); error.textContent='';
+    try{ await login(role.value, pin.value.trim()); location.href='/dashboard.html'; }
+    catch(err){ error.textContent=err.message; }
+  });
+});
+</script>
+</head><body>
+<div class="wrap" style="max-width:420px">
+  <div class="card">
+    <h2>Sign in</h2>
+    <p class="muted">Doctor: 1111 • Supervisor: 2222 • Front Office: 3333</p>
+    <form class="grid" style="gap:10px">
+      <label>Role
+        <select id="role" class="input">
+          <option value="doctor">Doctor</option>
+          <option value="supervisor">Supervisor</option>
+          <option value="front">Front Office</option>
+        </select>
+      </label>
+      <label>PIN <input id="pin" class="input" type="password" inputmode="numeric" placeholder="Enter PIN" required /></label>
+      <button class="btn">Login</button>
+      <div id="error" style="color:#b91c1c;font-weight:600"></div>
+    </form>
+  </div>
+</div>
+</body></html>

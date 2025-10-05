@@ -1,0 +1,108 @@
+<!-- /pharmacy-inventory.html -->
+<!doctype html><html lang="en"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Pharmacy Inventory · Clinic PWA</title>
+<link rel="stylesheet" href="/styles/styles.css"/>
+<script defer src="https://cdn.jsdelivr.net/npm/dexie@4.0.8/dist/dexie.min.js"></script>
+<script type="module">
+import { seed } from '/scripts/db.js';
+import { requireRole } from '/scripts/auth.js';
+import { mountNav } from '/scripts/ui.js';
+import { listInventory, upsertInventory, exportInventoryCSV, parseCSV } from '/scripts/rx.js';
+seed(); requireRole(['doctor','supervisor']);
+window.addEventListener('DOMContentLoaded', ()=>{
+  mountNav('pharmacy');
+  const q=document.getElementById('q');
+  const list=document.getElementById('list');
+  const f=document.getElementById('frow');
+  const imp=document.getElementById('imp');
+
+  async function refresh(){
+    const rows=await listInventory(q.value.trim());
+    list.innerHTML = rows.map(r=>`
+      <tr>
+        <td>${r.sku}</td><td>${r.name||''}</td><td>${r.pack||''}</td>
+        <td>${r.batch||''}</td><td>${r.expiry||''}</td><td>${r.hsn||''}</td>
+        <td>${(+r.mrp||0).toFixed(2)}</td><td>${(+r.rate||0).toFixed(2)}</td><td>${r.stock||0}</td>
+      </tr>`).join('');
+  }
+
+  q.addEventListener('input', refresh);
+  f.addEventListener('submit', async e=>{
+    e.preventDefault();
+    const data = Object.fromEntries(new FormData(f).entries());
+    data.mrp=+data.mrp||0; data.rate=+data.rate||0; data.stock=+data.stock||0;
+    try{
+      await upsertInventory(data); f.reset(); await refresh();
+    }catch(err){ alert(err.message); }
+  });
+
+  document.getElementById('exp').addEventListener('click', async ()=>{
+    const csv=await exportInventoryCSV();
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+    a.download='inventory.csv'; a.click();
+  });
+
+  imp.addEventListener('change', async e=>{
+    const file=e.target.files[0]; if(!file) return;
+    const rows=parseCSV(await file.text());
+    for(const r of rows){ await upsertInventory(r); }
+    alert('Imported '+rows.length+' rows'); await refresh();
+  });
+
+  refresh();
+});
+</script>
+</head>
+<body>
+<div id="nav"></div>
+<div class="wrap grid">
+  <div class="card">
+    <h2>Inventory</h2>
+    <div class="row">
+      <input id="q" class="input" placeholder="Search by name / sku / batch / HSN"/>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="btn ghost" id="exp">Export CSV</button>
+        <label class="btn">Import CSV<input id="imp" type="file" accept=".csv" style="display:none"/></label>
+      </div>
+    </div>
+    <div style="margin-top:10px" class="grid" >
+      <form id="frow" class="grid" style="gap:8px">
+        <div class="row">
+          <label>SKU* <input name="sku" class="input" required/></label>
+          <label>Product Name* <input name="name" class="input" required/></label>
+        </div>
+        <div class="row">
+          <label>Pack* <input name="pack" class="input" placeholder="10 tabs / 60ml" required/></label>
+          <label>Batch* <input name="batch" class="input" required/></label>
+        </div>
+        <div class="row">
+          <label>Expiry* <input name="expiry" class="input" placeholder="YYYY-MM" required/></label>
+          <label>HSN* <input name="hsn" class="input" placeholder="e.g. 30049099" required/></label>
+        </div>
+        <div class="row">
+          <label>MRP* <input name="mrp" class="input" type="number" step="0.01" required/></label>
+          <label>Rate* <input name="rate" class="input" type="number" step="0.01" required/></label>
+        </div>
+        <div class="row">
+          <label>Stock* <input name="stock" class="input" type="number" step="1" required/></label>
+          <div></div>
+        </div>
+        <button class="btn">Add / Update</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Items</h3>
+    <table class="table">
+      <thead>
+        <tr><th>SKU</th><th>Name</th><th>Pack</th><th>Batch</th><th>Expiry</th><th>HSN</th><th>MRP</th><th>Rate</th><th>Stock</th></tr>
+      </thead>
+      <tbody id="list"></tbody>
+    </table>
+  </div>
+</div>
+</body>
+</html>

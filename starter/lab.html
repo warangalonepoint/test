@@ -1,0 +1,127 @@
+<!doctype html><html lang="en"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Lab · Create Order</title>
+<link rel="stylesheet" href="/styles/styles.css"/>
+<script defer src="https://cdn.jsdelivr.net/npm/dexie@4.0.8/dist/dexie.min.js"></script>
+<script type="module">
+import { seed, db } from '/scripts/db.js';
+import { requireRole } from '/scripts/auth.js';
+import { mountNav } from '/scripts/ui.js';
+import { loadCatalog, searchTests, createLabOrder, printLabBill } from '/scripts/lab.js';
+seed(); requireRole(['doctor','supervisor','front']);
+
+let selected = [];
+
+window.addEventListener('DOMContentLoaded', async ()=>{
+  mountNav('lab');
+  const testInput = document.getElementById('testInput');
+  const testList = document.getElementById('testList');
+  const chosen = document.getElementById('chosen');
+  const totalEl = document.getElementById('total');
+  const patientSel = document.getElementById('patientId');
+
+  // load patients
+  const pts = await db.patients.toArray();
+  patientSel.innerHTML = pts.map(p=>`<option value="${p.id}" data-ph="${p.phone||''}">${p.name} — ${p.phone||''}</option>`).join('');
+
+  // catalog
+  const catalog = await loadCatalog();
+  renderSuggestions('');
+
+  function renderSelected(){
+    chosen.innerHTML = selected.map((t,i)=>`
+      <tr>
+        <td>${t.code}</td><td>${t.name}</td>
+        <td>₹${(+t.price).toFixed(2)}</td>
+        <td><button data-i="${i}" class="btn muted">Remove</button></td>
+      </tr>
+    `).join('') || `<tr><td colspan="4" class="muted">No tests selected</td></tr>`;
+    totalEl.textContent = '₹' + selected.reduce((a,b)=>a+(+b.price||0),0).toFixed(2);
+    setTimeout(()=>{
+      document.querySelectorAll('button[data-i]').forEach(btn=>{
+        btn.addEventListener('click', e=>{
+          selected.splice(+btn.dataset.i,1); renderSelected();
+        });
+      });
+    },0);
+  }
+
+  async function renderSuggestions(q){
+    const found = await searchTests(q);
+    testList.innerHTML = found.slice(0,20).map(t=>`
+      <div class="card" style="padding:8px;display:flex;justify-content:space-between;align-items:center">
+        <div><b>${t.name}</b> <span class="badge">${t.code}</span></div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <span class="badge">₹${(+t.price).toFixed(2)}</span>
+          <button class="btn" data-code="${t.code}">Add</button>
+        </div>
+      </div>
+    `).join('');
+    setTimeout(()=>{
+      document.querySelectorAll('button[data-code]').forEach(b=>{
+        b.addEventListener('click', e=>{
+          const code=b.dataset.code;
+          const t = found.find(x=>x.code===code);
+          if(t){ selected.push(t); renderSelected(); }
+        });
+      });
+    },0);
+  }
+
+  testInput.addEventListener('input', e=>renderSuggestions(testInput.value.trim()));
+
+  document.getElementById('create').addEventListener('click', async ()=>{
+    try{
+      const pid = patientSel.value;
+      if(!pid){ alert('Select patient'); return; }
+      const p = pts.find(x=>x.id===pid)||{};
+      const doctor = document.getElementById('doctor').value.trim();
+      const order = await createLabOrder({
+        patientId: pid,
+        patientName: p.name||'',
+        patientPhone: p.phone||'',
+        doctor,
+        tests: selected
+      });
+      alert('Lab order created: '+order.orderNo);
+      printLabBill(order.id);
+      selected = []; renderSelected();
+    }catch(err){ alert(err.message); }
+  });
+
+  renderSelected();
+});
+</script>
+</head>
+<body>
+<div id="nav"></div>
+<div class="wrap grid">
+  <div class="card">
+    <h2>Create Lab Order</h2>
+    <div class="row">
+      <label>Patient
+        <select id="patientId" class="input"></select>
+      </label>
+      <label>Doctor
+        <input id="doctor" class="input" placeholder="Doctor name"/>
+      </label>
+    </div>
+
+    <label>Find Test</label>
+    <input id="testInput" class="input" placeholder="Search test name or code"/>
+
+    <div id="testList" class="grid" style="margin-top:10px;grid-template-columns:1fr"></div>
+  </div>
+
+  <div class="card">
+    <h3>Selected Tests</h3>
+    <table class="table">
+      <thead><tr><th>Code</th><th>Test</th><th>Price</th><th></th></tr></thead>
+      <tbody id="chosen"></tbody>
+    </table>
+    <div style="margin-top:8px"><b>Total: <span id="total">₹0.00</span></b></div>
+    <button class="btn" id="create" style="margin-top:10px">Create Order & Print Bill</button>
+  </div>
+</div>
+</body>
+</html>

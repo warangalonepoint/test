@@ -1,0 +1,324 @@
+<!doctype html><html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Combined Invoice · Clinic PWA</title>
+<link rel="stylesheet" href="../styles/styles.css"/>
+<script defer src="https://cdn.jsdelivr.net/npm/dexie@4.0.8/dist/dexie.min.js"></script>
+<style>
+  :root { --ink:#111827; --muted:#6b7280; }
+  body{ background:#fafafa; }
+  .wrap{max-width:1000px;margin:0 auto}
+  .controls .row{gap:10px;flex-wrap:wrap}
+  .sheet{ max-width: 700px; margin: 10px auto; background:#fff; padding:16px 18px; box-shadow:0 1px 6px rgba(0,0,0,.08); position:relative }
+  .head{ display:flex; justify-content:space-between; align-items:flex-start; gap:12px }
+  h1{ font-size:18px; margin:0 0 2px 0 }
+  .muted{ color:var(--muted) }
+  .badge{ padding:2px 8px; border-radius:999px; background:#eef2ff; font-size:12px }
+  table{ width:100%; border-collapse:collapse; margin-top:10px }
+  th,td{ border-bottom:1px dashed #e5e7eb; padding:6px 6px; font-size:13px; vertical-align:top }
+  th.small, td.small{ font-size:12px }
+  .right{text-align:right}
+  .watermark{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; pointer-events:none; opacity:.06; font-weight:800; font-size:48px; letter-spacing:.15em }
+  .foot{ margin-top:10px; display:flex; justify-content:space-between; align-items:flex-end; gap:10px }
+  .sign{ border-top:1px solid #e5e7eb; padding-top:4px; text-align:right; min-width:180px }
+  .toolbar{ display:flex; gap:8px; justify-content:flex-end; margin:10px auto; max-width:700px }
+  .totals{ margin-top:8px }
+  .kpi{display:grid;grid-template-columns:1fr auto;gap:8px}
+  .pill{padding:2px 8px;border-radius:999px;background:#f3f4f6;font-size:12px}
+  @media print{
+    body{ background:#fff }
+    .toolbar, .controls{ display:none !important }
+    .sheet{ box-shadow:none; margin:0; max-width:100%; padding:8mm 10mm }
+  }
+</style>
+<script type="module">
+import { db, seed } from '../scripts/db.js';
+import { fmt } from '../scripts/utils.js';
+seed();
+
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+
+/* State */
+let chosenPid=null, chosenDate=null;    // yyyy-mm-dd
+let consultFee=0;
+let saleInv=null, saleItems=[];
+let labInv=null, labItems=[];
+let opdVisit=null; // most recent OPD on that day for patient
+
+window.addEventListener('DOMContentLoaded', async ()=>{
+  bindControls();
+  await preloadPatients();
+  // Deep link support: ?pid=P0001&date=2025-10-04&auto=1
+  const q = new URLSearchParams(location.search);
+  const qpPid = q.get('pid'); const qpDate = q.get('date');
+  if(qpPid){ $('#patientId').value = qpPid; chosenPid = qpPid; await populateDates(qpPid); }
+  if(qpDate){ $('#visitDate').value = qpDate; chosenDate = qpDate; }
+  if(chosenPid && chosenDate){ await loadAndRender(); }
+});
+
+function ym(dob){
+  if(!dob) return '';
+  const birth = new Date(dob);
+  const now = new Date();
+  let y = now.getFullYear()-birth.getFullYear();
+  let m = now.getMonth()-birth.getMonth();
+  if(m<0){ y--; m+=12; }
+  return `${y}y ${m}m`;
+}
+
+/* ---------- Controls ---------- */
+function bindControls(){
+  $('#patientId').addEventListener('change', async (e)=>{
+    chosenPid = e.target.value || null;
+    await populateDates(chosenPid);
+  });
+  $('#visitDate').addEventListener('change', async (e)=>{
+    chosenDate = e.target.value || null;
+    await loadAndRender();
+  });
+  $('#consultFee').addEventListener('input', ()=>{
+    consultFee = +( $('#consultFee').value || 0 );
+    renderSheet(); // re-total
+  });
+  $('#printBtn').addEventListener('click', ()=>window.print());
+  $('#backBtn').addEventListener('click', ()=>history.back());
+}
+
+async function preloadPatients(){
+  const pts = await db.patients.toArray().catch(()=>[]);
+  pts.sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+  $('#patientId').innerHTML = `<option value="">— choose —</option>` + pts.map(p=>`<option value="${p.id}">${p.id} — ${p.name||''} ${p.phone?('· '+p.phone):''}</option>`).join('');
+}
+
+async function populateDates(pid){
+  if(!pid){ $('#visitDate').innerHTML = `<option value="">—</option>`; return; }
+  // gather all days where this patient has activity (OPD / sale / lab)
+  const inv = await db.invoices.where('patientId').equals(pid).toArray().catch(()=>[]);
+  const days = new Set(inv.map(i=>i.date).filter(Boolean));
+  const opd = await db.OPD.where('patientId').equals(pid).toArray().catch(()=>[]);
+  opd.forEach(o=>{ if(o.date) days.add(o.date); });
+
+  const arr = Array.from(days).sort((a,b)=>b.localeCompare(a)); // latest first
+  $('#visitDate').innerHTML = `<option value="">— pick date —</option>` + arr.map(d=>`<option value="${d}">${d}</option>`).join('');
+  // Auto-select latest
+  if(arr.length){ $('#visitDate').value = arr[0]; chosenDate = arr[0]; await loadAndRender(); }
+}
+
+/* ---------- Load ---------- */
+async function loadAndRender(){
+  consultFee = +( $('#consultFee').value || 0 );
+
+  saleInv=null; saleItems=[]; labInv=null; labItems=[]; opdVisit=null;
+
+  // Pharmacy sale for that patient/date (latest of the day)
+  const invs = await db.invoices
+    .where('patientId').equals(chosenPid)
+    .toArray().catch(()=>[]);
+  const todays = invs.filter(i=>i.date===chosenDate);
+
+  const saleCandidates = todays.filter(i=>i.type==='sale');
+  saleCandidates.sort((a,b)=> (b.ts||0)-(a.ts||0));
+  saleInv = saleCandidates[0] || null;
+  if(saleInv){
+    saleItems = await db.invoiceItems.where('invoiceId').equals(saleInv.id).toArray().catch(()=>[]);
+  }
+
+  const labCandidates = todays.filter(i=>i.type==='lab');
+  labCandidates.sort((a,b)=> (b.ts||0)-(a.ts||0));
+  labInv = labCandidates[0] || null;
+  if(labInv){
+    labItems = await db.invoiceItems.where('invoiceId').equals(labInv.id).toArray().catch(()=>[]);
+  }
+
+  // OPD visit (latest on that date)
+  const visits = await db.OPD.where('patientId').equals(chosenPid).toArray().catch(()=>[]);
+  const todaysOpd = visits.filter(v=>v.date===chosenDate).sort((a,b)=> (b.ts||0)-(a.ts||0));
+  opdVisit = todaysOpd[0] || null;
+
+  await renderSheet();
+}
+
+/* ---------- Render ---------- */
+async function renderSheet(){
+  const patient = chosenPid ? await db.patients.get(chosenPid).catch(()=>null) : null;
+
+  // Header
+  $('#h-title').textContent = 'Combined Invoice';
+  $('#h-sub').textContent = chosenDate ? `Patient day: ${chosenDate}` : '';
+  $('#p-line').innerHTML = chosenPid
+    ? `<b>${chosenPid}</b>${patient?` • ${patient.name||''}`:''}${patient&&patient.dob?` • ${ym(patient.dob)}`:''}${patient&&patient.phone?` • ${patient.phone}`:''}`
+    : '<b>—</b>';
+  $('#d-line').innerHTML = opdVisit?.doctor ? `Doctor: ${opdVisit.doctor}` : (saleInv?.doctor?`Doctor: ${saleInv.doctor}`:'');
+
+  // Build unified rows
+  const tbody = $('#rows'); tbody.innerHTML='';
+  let rowNo=1;
+  let taxable=0, sgst=0, cgst=0, total=0;
+
+  // Section: OPD (as single fee line + show diagnosis/complaints)
+  if(opdVisit){
+    addRow({
+      no: rowNo++,
+      name: `OPD Consultation${opdVisit.diagnosis?` — ${escapeHtml(opdVisit.diagnosis)}`:''}`,
+      details: [
+        opdVisit.complaints?`Complaints: ${escapeHtml(opdVisit.complaints)}`:'',
+        formatVitals(opdVisit)
+      ].filter(Boolean).join('<br/>'),
+      qty: 1, rate: +consultFee||0, gstPct: 0
+    });
+  }else if(consultFee>0){
+    addRow({ no: rowNo++, name:'OPD Consultation', details:'', qty:1, rate:+consultFee||0, gstPct:0 });
+  }
+
+  // Section: Pharmacy (with SGST/CGST)
+  if(saleInv && saleItems.length){
+    const headerTr = document.createElement('tr');
+    headerTr.innerHTML = `<td colspan="8" class="small"><span class="pill">Pharmacy Invoice #${saleInv.id}</span></td>`;
+    tbody.appendChild(headerTr);
+
+    for(const it of saleItems){
+      addRow({
+        no: rowNo++,
+        name: it.name || '',
+        details: `Batch: ${it.batch||'-'} · Exp: ${(it.expiry||'').slice(0,10)||'-'}${it.note?`<br/><span class="muted">${escapeHtml(it.note)}</span>`:''}`,
+        qty: +it.qty||0, rate: +it.rate||0, gstPct: +it.gstPct||0
+      });
+    }
+  }
+
+  // Section: Lab
+  if(labInv && labItems.length){
+    const headerTr = document.createElement('tr');
+    headerTr.innerHTML = `<td colspan="8" class="small"><span class="pill">Lab Bill #${labInv.id}</span></td>`;
+    tbody.appendChild(headerTr);
+
+    for(const it of labItems){
+      const rate = +it.rate || +it.price || 0;
+      addRow({
+        no: rowNo++,
+        name: it.name || '',
+        details: it.code?`Code: ${it.code}`:'',
+        qty: +it.qty||1, rate, gstPct: 0 // usually no GST for lab; adjust if needed
+      });
+    }
+  }
+
+  // Totals
+  $('#t-taxable').textContent = taxable.toFixed(2);
+  $('#t-sgst').textContent = sgst.toFixed(2);
+  $('#t-cgst').textContent = cgst.toFixed(2);
+  $('#t-total').textContent = total.toFixed(2);
+
+  // Auto-print?
+  const auto = new URLSearchParams(location.search).get('auto');
+  if(auto==='1') setTimeout(()=>window.print(), 100);
+
+  /* helpers scoped to render */
+  function addRow({no,name,details,qty,rate,gstPct}){
+    const base = +(qty*rate).toFixed(2);
+    const tax = +(base * (gstPct/100)).toFixed(2);
+    const half = +(tax/2).toFixed(2);
+    const gross = +(base + tax).toFixed(2);
+    taxable += base; sgst += half; cgst += half; total += gross;
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${no}</td>
+      <td>
+        <div><b>${escapeHtml(name)}</b></div>
+        ${details?`<div class="muted">${details}</div>`:''}
+      </td>
+      <td class="right">${qty.toFixed(0)}</td>
+      <td class="right">₹${rate.toFixed(2)}</td>
+      <td class="right">${gstPct.toFixed(0)}%</td>
+      <td class="right">₹${half.toFixed(2)}</td>
+      <td class="right">₹${half.toFixed(2)}</td>
+      <td class="right">₹${gross.toFixed(2)}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+}
+
+function escapeHtml(s){
+  return (s??'').toString().replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
+}
+function formatVitals(v){
+  const bits=[];
+  if(v.height) bits.push(`Ht ${v.height} cm`);
+  if(v.weight) bits.push(`Wt ${v.weight} kg`);
+  if(v.ageMonths) bits.push(`Age ${Math.floor(v.ageMonths/12)}y ${v.ageMonths%12}m`);
+  if(v.temp) bits.push(`Temp ${v.temp}°F`);
+  if(v.bsa) bits.push(`BSA ${v.bsa}`);
+  return bits.length?bits.join(' · '):'';
+}
+</script>
+</head>
+<body>
+
+<!-- Controls (not printed) -->
+<div class="wrap controls">
+  <div class="card">
+    <div class="row">
+      <h2>Combined Invoice</h2>
+      <div style="flex:1"></div>
+      <button id="backBtn" class="btn ghost" type="button">Back</button>
+      <button id="printBtn" class="btn" type="button">Print</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <label>Patient
+        <select id="patientId" class="input"></select>
+      </label>
+      <label>Date
+        <select id="visitDate" class="input"><option value="">—</option></select>
+      </label>
+      <label>Consultation Fee (₹)
+        <input id="consultFee" class="input right" type="number" step="0.01" value="0"/>
+      </label>
+      <div class="muted small" style="align-self:flex-end">Tip: You can deep-link with <code>?pid=P0001&date=2025-10-04&auto=1</code></div>
+    </div>
+  </div>
+</div>
+
+<!-- Printable sheet -->
+<div class="sheet">
+  <div class="watermark">CLINIC</div>
+  <div class="head">
+    <div>
+      <h1>Clinic Name</h1>
+      <div class="muted small">Address line, City · Phone</div>
+    </div>
+    <div style="text-align:right">
+      <div id="h-title" class="badge">Combined Invoice</div>
+      <div id="h-sub" class="muted small"></div>
+    </div>
+  </div>
+
+  <div style="margin-top:8px; display:flex; justify-content:space-between; gap:10px">
+    <div id="p-line"></div>
+    <div id="d-line" class="muted"></div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>#</th><th>Item</th><th class="right">Qty</th><th class="right">Rate</th>
+        <th class="right small">GST%</th><th class="right small">SGST</th><th class="right small">CGST</th><th class="right">Amount</th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+    <tfoot>
+      <tr><td colspan="7" class="right">Taxable</td><td class="right">₹ <span id="t-taxable">0.00</span></td></tr>
+      <tr><td colspan="7" class="right">SGST</td><td class="right">₹ <span id="t-sgst">0.00</span></td></tr>
+      <tr><td colspan="7" class="right">CGST</td><td class="right">₹ <span id="t-cgst">0.00</span></td></tr>
+      <tr><td colspan="7" class="right"><b>Total</b></td><td class="right"><b>₹ <span id="t-total">0.00</span></b></td></tr>
+    </tfoot>
+  </table>
+
+  <div class="foot">
+    <div class="muted small">Thank you for visiting • Authorized Signatory</div>
+    <div class="sign small">Signature</div>
+  </div>
+</div>
+</body>
+</html>

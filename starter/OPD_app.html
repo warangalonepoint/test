@@ -1,0 +1,380 @@
+<!doctype html><html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>OPD · Clinic PWA</title>
+<link rel="stylesheet" href="/styles/styles.css"/>
+<script defer src="https://cdn.jsdelivr.net/npm/dexie@4.0.8/dist/dexie.min.js"></script>
+<style>
+  .small{font-size:12px}
+  .muted{opacity:.7}
+  #dbg-log-opd{background:#0b1020;color:#bfe1ff;padding:10px;border-radius:10px;max-height:240px;overflow:auto;margin-top:8px}
+  .row-gap{gap:10px}
+</style>
+<script type="module">
+import { seed, db } from '/scripts/db.js';
+import { requireRole } from '/scripts/auth.js';
+import { mountNav } from '/scripts/ui.js';
+import { growthAdvice, recommendedVaccines } from '/scripts/growthSuggestions.js';
+import { fmt } from '/scripts/utils.js';
+
+seed(); requireRole(['doctor','supervisor','front']);
+
+const $ = s=>document.querySelector(s);
+
+/* ---------- Error pipe to debug log so nothing fails silently ---------- */
+window.addEventListener('error', (e)=> appendLog('JS ERROR: ' + (e?.error?.message || e?.message || e)));
+window.addEventListener('unhandledrejection', (e)=> appendLog('PROMISE ERROR: ' + (e?.reason?.message || e?.reason)));
+
+/* ---------- helpers ---------- */
+function monthsFromDOB(dobStr){
+  if(!dobStr) return null;
+  const [y,m,d] = String(dobStr).slice(0,10).split('-').map(Number);
+  if(!y||!m||!d) return null;
+  const dob = new Date(y,m-1,d);
+  const now = new Date();
+  let months = (now.getFullYear()-dob.getFullYear())*12 + (now.getMonth()-dob.getMonth());
+  if(now.getDate()<dob.getDate()) months--;
+  return months<0?0:months;
+}
+function appendLog(line){
+  const el = $('#dbg-log-opd'); if(!el) return;
+  const ts = new Date().toLocaleTimeString();
+  el.textContent += (el.textContent?'\n':'') + `[${ts}] ${line}`;
+  el.scrollTop = el.scrollHeight;
+}
+
+/* ---------- bootstrap ---------- */
+window.addEventListener('DOMContentLoaded', ()=>{
+  mountNav('opd');
+  init().catch(err=>appendLog('init() failed: '+(err?.message||err)));
+});
+
+async function init(){
+  await loadPatients();
+  wireDOBToAge();
+  await preselectFromQueue();   // reads currentPatientId → fills vitals if found
+  bindForm();
+  bindGrowth();
+  bindDebug();                  // safe bind after DOM is ready
+  bindHistoryLink();            // quick link button
+}
+
+/* ---------- core UI ---------- */
+async function loadPatients(){
+  const pts=await db.patients.toArray();
+  const sel=$('#patientId');
+  sel.innerHTML=pts.map(p=>`<option value="${p.id}">${p.id} — ${p.name} (${p.phone||''})</option>`).join('');
+  // on change: fill DOB/age if patient has DOB
+  sel.addEventListener('change', async ()=>{
+    const pid = sel.value;
+    if(!pid) return;
+    const p = await db.patients.get(pid);
+    if(!p) return;
+    if(p.sex) $('#sex').value = p.sex;
+    if(p.dob){
+      $('#dob').value = String(p.dob).slice(0,10);
+      const m = monthsFromDOB($('#dob').value);
+      if(m!=null) $('#ageMonths').value = m;
+    } else if (p.ageMonths!=null){
+      $('#ageMonths').value = +p.ageMonths;
+    }
+    if(p.height!=null) $('#height').value = p.height;
+    if(p.weight!=null) $('#weight').value = p.weight;
+  });
+}
+
+function wireDOBToAge(){
+  const dob = $('#dob'), age = $('#ageMonths');
+  if(!dob||!age) return;
+  const recalc = ()=>{ const m=monthsFromDOB(dob.value); age.value = (m==null?'':m); };
+  ['change','input','blur'].forEach(evt=> dob.addEventListener(evt, recalc));
+}
+
+async function preselectFromQueue(){
+  const pid = localStorage.getItem('currentPatientId');
+  if(!pid) return;
+  const sel=$('#patientId'); sel.value = pid;
+
+  const p = await db.patients.get(pid);
+  if(p){
+    if(p.sex) $('#sex').value = p.sex;
+    if(p.dob){
+      $('#dob').value = String(p.dob).slice(0,10);
+      const m = monthsFromDOB($('#dob').value);
+      if(m!=null) $('#ageMonths').value = m;
+    } else if (p.ageMonths!=null){
+      $('#ageMonths').value = +p.ageMonths;
+    }
+    if(p.height!=null) $('#height').value = p.height;
+    if(p.weight!=null) $('#weight').value = p.weight;
+  }
+
+  // carry forward last temperature if any
+  const last = await db.OPD.where('patientId').equals(pid).reverse().sortBy('ts');
+  if(last && last[0] && last[0].temp) $('#temp').value = last[0].temp;
+
+  localStorage.removeItem('currentPatientId');
+}
+
+function bindForm(){
+  const form=$('#opdForm'), out=$('#advice');
+  form.addEventListener('submit', async e=>{
+    e.preventDefault();
+    try{
+      const role=localStorage.getItem('sessionRole'); 
+      if(role!=='doctor'){ alert('Read-only for your role'); return; }
+
+      const data=Object.fromEntries(new FormData(form).entries());
+      data.date=fmt.date();
+      data.ts = Date.now();
+      data.height= data.height? +data.height : null; 
+      data.weight= data.weight? +data.weight : null; 
+      data.ageMonths= data.ageMonths? +data.ageMonths : null;
+      data.temp = data.temp? +data.temp : null;
+
+      await db.OPD.add(data);
+      await db.patients.update(data.patientId,{
+        sex:data.sex||null, ageMonths:data.ageMonths,
+        height:data.height, weight:data.weight,
+        dob: $('#dob').value || null
+      });
+
+      localStorage.setItem('historyHighlight', JSON.stringify({ patientId:data.patientId, ts:data.ts }));
+
+      form.reset();
+      out.innerHTML = `<span class="badge">✅ OPD saved. <a href="/patients-history.html" style="text-decoration:underline">Open History</a></span>`;
+      appendLog('Saved OPD for patient '+data.patientId);
+    }catch(err){
+      appendLog('Save error: '+(err?.message||err));
+    }
+  });
+}
+
+function bindGrowth(){
+  const out=$('#advice');
+  const btn=$('#checkGrowth');
+  if(!btn) return;
+  btn.addEventListener('click', async ()=>{
+    try{
+      const heightCm=+$('#height').value;
+      const weightKg=+$('#weight').value;
+      const ageMonths=+$('#ageMonths').value;
+      const sex=$('#sex').value;
+      if(!heightCm||!weightKg||!ageMonths){ out.textContent='Enter height/weight/age.'; return; }
+      const adv=await growthAdvice({ageMonths,sex,heightCm,weightKg});
+      const vaccines=await recommendedVaccines(ageMonths);
+      let html=`<b>${adv.status}</b> — ${adv.tip}`;
+      if(adv.bmi) html+=`<br><span class="badge">BMI: ${adv.bmi.toFixed(1)}</span>`;
+      if(adv.bsa) html+=` <span class="badge">BSA: ${adv.bsa.toFixed(2)} m²</span>`;
+      if(vaccines.length) html+=`<br><span class="small muted">Vaccines: ${vaccines.join(', ')}</span>`;
+      out.innerHTML=html;
+    }catch(err){
+      appendLog('Growth calc error: '+(err?.message||err));
+    }
+  });
+}
+
+/* ---------- Quick link to Patient History ---------- */
+function bindHistoryLink(){
+  const btn = $('#openHistoryBtn');
+  if(!btn) return;
+  btn.addEventListener('click', ()=>{
+    const pid = $('#patientId')?.value;
+    if(pid) localStorage.setItem('historyFilterPatientId', pid);
+    window.location.href = '/patients-history.html';
+  });
+}
+
+/* ---------- Debug / QA ---------- */
+function bindDebug(){
+  const btnSeed = $('#dbg-seed-opd');
+  const btnCheck = $('#dbg-check-opd');
+  const btnFix = $('#dbg-fix-opd');
+  const btnClear = $('#dbg-clear-opd');
+
+  if(btnSeed) btnSeed.addEventListener('click', ()=>seedOPD().catch(e=>appendLog('seedOPD error: '+(e?.message||e))));
+  if(btnCheck) btnCheck.addEventListener('click', async ()=>{
+    try{
+      appendLog('CHECK ▶ scanning OPD…');
+      const issues = await healthCheckOPD();
+      if(!issues.length){ appendLog('CHECK ✓ no issues'); return; }
+      issues.forEach(i=>appendLog(`BUG • ${i.type} • ${JSON.stringify(i)}`));
+      appendLog(`CHECK ⚠ found ${issues.length} issues`);
+    }catch(e){ appendLog('CHECK error: '+(e?.message||e)); }
+  });
+  if(btnFix) btnFix.addEventListener('click', async ()=>{
+    try{
+      appendLog('FIX ▶ running auto-fix…');
+      const issues = await healthCheckOPD();
+      if(!issues.length){ appendLog('FIX ✓ nothing to fix'); return; }
+      const { fixed } = await autoFixOPD(issues);
+      appendLog(`FIX ✓ changed ${fixed} record(s)`);
+    }catch(e){ appendLog('FIX error: '+(e?.message||e)); }
+  });
+  if(btnClear) btnClear.addEventListener('click', ()=>{ const el=$('#dbg-log-opd'); if(el) el.textContent=''; });
+}
+
+const demoComplaints = ['Fever','Cough','Cold','Vomiting','Rash','Injury','Follow-up','Vaccination'];
+const demoDx = ['Viral fever','URTI','Gastroenteritis','Dermatitis','Normal exam','Acute pharyngitis'];
+function pick(a){ return a[Math.floor(Math.random()*a.length)]; }
+
+async function seedOPD(){
+  const pts = await db.patients.toArray();
+  if(!pts.length){ alert('No patients in DB — seed from Bookings first.'); return; }
+  const n = Math.min(8, Math.max(4, Math.floor(pts.length/4)));
+  for(let i=0;i<n;i++){
+    const p = pick(pts);
+    const ageM = p.ageMonths!=null ? +p.ageMonths : monthsFromDOB(p.dob) ?? 36;
+    const height = p.height!=null ? +p.height : (100+Math.random()*40);
+    const weight = p.weight!=null ? +p.weight : (12+Math.random()*15);
+    await db.OPD.add({
+      patientId: p.id,
+      doctor: 'Dr Test',
+      complaints: pick(demoComplaints),
+      diagnosis: pick(demoDx),
+      height: +Number(height).toFixed(1),
+      weight: +Number(weight).toFixed(1),
+      ageMonths: ageM,
+      sex: p.sex || 'M',
+      temp: +(98.0 + Math.random()*2).toFixed(1),
+      medications: 'Paracetamol 5ml TDS',
+      recommendations: 'Hydration, rest; review if fever persists',
+      date: fmt.date(),
+      ts: Date.now()+i
+    });
+  }
+  appendLog('Seeded OPD visits.');
+}
+
+/* --------- health check & auto-fix for OPD --------- */
+async function healthCheckOPD(){
+  const issues = [];
+  const pts = await db.patients.toArray();
+  const ptMap = new Map(pts.map(p=>[p.id,p]));
+  const rows = await db.OPD.toArray();
+
+  for(const r of rows){
+    if(!r.patientId || !ptMap.has(r.patientId)){
+      issues.push({ type:'MISSING_PATIENT', id:r.id });
+    }
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(r.date||'')) issues.push({ type:'BAD_DATE', id:r.id, value:r.date });
+    if(typeof r.ts!=='number' || !r.ts) issues.push({ type:'MISSING_TS', id:r.id });
+
+    ['height','weight','ageMonths','temp'].forEach(k=>{
+      if(r[k]!=null && !Number.isFinite(+r[k])) issues.push({ type:'NAN_'+k.toUpperCase(), id:r.id, key:k, value:r[k] });
+    });
+
+    if(!(r.medications||'').trim()) issues.push({ type:'EMPTY_MEDS', id:r.id });
+    if(!(r.recommendations||'').trim()) issues.push({ type:'EMPTY_RECS', id:r.id });
+  }
+  return issues;
+}
+
+async function autoFixOPD(issues){
+  let fixed = 0;
+  const pts = await db.patients.toArray();
+  const fallbackPid = pts[0]?.id || null;
+
+  for(const is of issues){
+    try{
+      if(is.type==='MISSING_PATIENT' && fallbackPid){
+        await db.OPD.update(is.id, { patientId: fallbackPid }); fixed++;
+      }
+      if(is.type==='BAD_DATE'){
+        await db.OPD.update(is.id, { date: fmt.date() }); fixed++;
+      }
+      if(is.type==='MISSING_TS'){
+        await db.OPD.update(is.id, { ts: Date.now() }); fixed++;
+      }
+      if(is.type?.startsWith('NAN_') && is.key){
+        await db.OPD.update(is.id, { [is.key]: null }); fixed++;
+      }
+      if(is.type==='EMPTY_MEDS'){
+        await db.OPD.update(is.id, { medications: '—' }); fixed++;
+      }
+      if(is.type==='EMPTY_RECS'){
+        await db.OPD.update(is.id, { recommendations: '—' }); fixed++;
+      }
+    }catch(e){
+      appendLog(`AutoFix error • ${is.type}: ${e?.message||e}`);
+    }
+  }
+  return { fixed };
+}
+</script>
+</head>
+<body>
+<div id="nav"></div>
+
+<div class="wrap grid">
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <h2>OPD Record</h2>
+      <button id="openHistoryBtn" class="btn ghost" type="button">Open Patient History</button>
+    </div>
+
+    <form id="opdForm" class="grid" style="gap:10px">
+      <div class="row row-gap">
+        <label>Patient <select class="input" name="patientId" id="patientId"></select></label>
+        <label>Doctor <input class="input" name="doctor" placeholder="Doctor name"/></label>
+      </div>
+
+      <div class="row row-gap">
+        <label>Complaints <input class="input" name="complaints" placeholder="..." /></label>
+        <label>Diagnosis <input class="input" name="diagnosis" placeholder="..." /></label>
+      </div>
+
+      <div class="row row-gap">
+        <label>Height (cm) <input class="input" name="height" id="height" type="number" step="0.1"/></label>
+        <label>Weight (kg) <input class="input" name="weight" id="weight" type="number" step="0.1"/></label>
+      </div>
+
+      <div class="row row-gap">
+        <label>Date of Birth
+          <input class="input" name="dob" id="dob" type="date" />
+        </label>
+        <label>Age (months)
+          <input class="input" name="ageMonths" id="ageMonths" type="number" placeholder="auto from DOB or patient"/>
+        </label>
+        <label>Sex
+          <select class="input" id="sex" name="sex"><option value="M">Boy</option><option value="F">Girl</option></select>
+        </label>
+      </div>
+
+      <div class="row row-gap">
+        <label>Temp (°F) <input class="input" name="temp" id="temp" type="number" step="0.1"/></label>
+        <label>BSA <input class="input" name="bsa" placeholder="auto later"/></label>
+      </div>
+
+      <label>Medications
+        <textarea class="input" name="medications" rows="3" placeholder="drug, dosage, frequency..."></textarea>
+      </label>
+      <label>Recommendations
+        <textarea class="input" name="recommendations" rows="2" placeholder="tips, next visit..."></textarea>
+      </label>
+
+      <div class="row row-gap" style="flex-wrap:wrap">
+        <button class="btn" type="submit">Save OPD</button>
+        <button class="btn ghost" id="checkGrowth" type="button">Check Growth</button>
+      </div>
+      <div id="advice" class="badge"></div>
+    </form>
+  </div>
+
+  <!-- Debug / QA -->
+  <div class="card">
+    <h2>Debug / QA</h2>
+    <p class="small muted">Seed demo OPD visits, scan for issues, and auto-fix common problems. Errors are piped here.</p>
+    <div class="row" style="gap:8px;flex-wrap:wrap">
+      <button id="dbg-seed-opd" class="btn" type="button">Seed OPD Visits</button>
+      <button id="dbg-check-opd" class="btn ghost" type="button">Run Health Check</button>
+      <button id="dbg-fix-opd" class="btn ghost" type="button">Auto-Fix Issues</button>
+      <button id="dbg-clear-opd" class="btn danger ghost" type="button">Clear Log</button>
+    </div>
+    <pre id="dbg-log-opd" class="small"></pre>
+  </div>
+</div>
+</body>
+</html>

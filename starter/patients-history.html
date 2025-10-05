@@ -1,0 +1,153 @@
+<!doctype html><html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Patient History · Clinic PWA</title>
+<link rel="stylesheet" href="/styles/styles.css"/>
+<script defer src="https://cdn.jsdelivr.net/npm/dexie@4.0.8/dist/dexie.min.js"></script>
+<script type="module">
+import { seed, db } from '/scripts/db.js';
+import { requireRole } from '/scripts/auth.js';
+import { mountNav } from '/scripts/ui.js';
+
+seed(); requireRole(['doctor','supervisor','front']);
+
+const $ = s=>document.querySelector(s);
+
+window.addEventListener('DOMContentLoaded', async ()=>{
+  mountNav('patients');
+  await loadPatients();
+  $('#patientId').addEventListener('change', ()=> onPatientChange($('#patientId').value));
+
+  // highlight marker
+  const raw = localStorage.getItem('historyHighlight');
+  if(raw){
+    try {
+      const { patientId } = JSON.parse(raw);
+      if (patientId) {
+        $('#patientId').value = patientId;
+        await onPatientChange(patientId);
+        setTimeout(maybeHighlightLatest, 80);
+        return;
+      }
+    } catch {}
+  }
+
+  $('#btnCSV').addEventListener('click', exportCSV);
+  $('#btnPDF').addEventListener('click', exportPDF);
+  $('#btnPrintLatest').addEventListener('click', printLastVisit);
+});
+
+async function loadPatients(){
+  const pts=await db.patients.toArray();
+  const sel=$('#patientId');
+  sel.innerHTML='<option value="">Select Patient</option>'+pts.map(p=>`<option value="${p.id}">${p.id} — ${p.name} (${p.phone||''})</option>`).join('');
+}
+
+async function onPatientChange(pid){
+  if(!pid){ $('#visits').innerHTML=''; return; }
+  const rows=await db.OPD.where('patientId').equals(pid).sortBy('ts');
+  const body=$('#visits');
+  body.innerHTML = rows.length ? rows.map(r=>`
+    <tr class="small" data-ts="${r.ts||''}">
+      <td>${r.date||''}</td>
+      <td>${r.complaints||''}</td>
+      <td>${r.diagnosis||''}</td>
+      <td>${r.height||''}/${r.weight||''}</td>
+      <td>${r.temp||''}</td>
+      <td>${r.medications||''}</td>
+      <td>${r.recommendations||''}</td>
+      <td><a class="btn ghost" href="print/opd-summary.html?id=${encodeURIComponent(r.id)}" target="_blank">Print</a></td>
+    </tr>
+  `).join('') : `<tr><td colspan="8">No visits yet.</td></tr>`;
+}
+
+function maybeHighlightLatest() {
+  const raw = localStorage.getItem('historyHighlight');
+  if(!raw) return;
+  let mark = null;
+  try { mark = JSON.parse(raw); } catch(_){}
+  if(!mark) return;
+  let row = mark.ts ? document.querySelector(`tbody#visits tr[data-ts="${mark.ts}"]`) : null;
+  if(!row){
+    const rows = document.querySelectorAll('tbody#visits tr');
+    if(rows.length) row = rows[rows.length-1];
+  }
+  if(row){
+    row.classList.add('row-highlight');
+    row.scrollIntoView({ behavior:'smooth', block:'center' });
+  }
+  localStorage.removeItem('historyHighlight');
+}
+
+/* ---------- Export ---------- */
+function exportCSV(){
+  const rows=[...document.querySelectorAll('#visits tr')];
+  if(!rows.length){ alert('No data'); return; }
+  const header=['Date','Complaints','Diagnosis','Ht/Wt','Temp','Medications','Recommendations'];
+  const data=[header.join(',')];
+  rows.forEach(r=>{
+    const cols=[...r.children].map(td=>`"${td.textContent.trim()}"`);
+    data.push(cols.join(','));
+  });
+  const blob=new Blob([data.join('\n')],{type:'text/csv'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='patient-history.csv';
+  a.click();
+}
+
+function exportPDF(){
+  window.print();
+}
+
+/* ---------- Print Last Visit ---------- */
+async function printLastVisit(){
+  const pid = $('#patientId').value;
+  if(!pid){ alert('Choose a patient first'); return; }
+  let rows = await db.OPD.where('patientId').equals(pid).toArray().catch(()=>[]);
+  if(!rows.length){ alert('No OPD visits for this patient'); return; }
+  rows.sort((a,b)=>(b.ts||0)-(a.ts||0));
+  const last = rows[0];
+  if(!last?.id){ alert('Could not resolve last visit'); return; }
+  window.open(`print/opd-summary.html?id=${encodeURIComponent(last.id)}`, '_blank');
+}
+</script>
+<style>
+.small{font-size:13px}
+.row-highlight{animation:flashRow 1.6s ease-in-out;background:#fff7ed!important}
+@keyframes flashRow{0%{background:#fff}20%{background:#fde68a}100%{background:#fff7ed}}
+@media print {
+  body{font-size:12px}
+  #nav,.controls,.btn{display:none!important}
+  table{width:100%;border-collapse:collapse}
+  th,td{border:1px solid #000;padding:4px}
+}
+</style>
+</head>
+<body>
+<div id="nav"></div>
+<div class="wrap grid">
+  <div class="card">
+    <h2>Patient History</h2>
+    <label>Patient <select id="patientId" class="input"></select></label>
+
+    <div class="row controls" style="margin:10px 0;gap:8px;flex-wrap:wrap">
+      <button id="btnCSV" class="btn ghost">Export CSV</button>
+      <button id="btnPDF" class="btn ghost">Export PDF</button>
+      <button id="btnPrintLatest" class="btn ghost">Print Last Visit</button>
+    </div>
+
+    <table class="table small" style="margin-top:10px">
+      <thead>
+        <tr>
+          <th>Date</th><th>Complaints</th><th>Diagnosis</th><th>Ht/Wt</th>
+          <th>Temp</th><th>Medications</th><th>Recs</th><th></th>
+        </tr>
+      </thead>
+      <tbody id="visits"></tbody>
+    </table>
+  </div>
+</div>
+</body>
+</html>

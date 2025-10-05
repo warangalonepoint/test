@@ -1,0 +1,286 @@
+<!doctype html><html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>GST Report · Clinic PWA</title>
+<link rel="stylesheet" href="../styles/styles.css"/>
+<script defer src="https://cdn.jsdelivr.net/npm/dexie@4.0.8/dist/dexie.min.js"></script>
+<style>
+  .wrap{max-width:1000px;margin:0 auto}
+  .card h2{margin:0}
+  .muted{opacity:.7}
+  .right{text-align:right}
+  .row-gap{gap:10px}
+  .pill{padding:2px 8px;border-radius:999px;background:#eef2ff}
+  .table td,.table th{font-size:13px}
+  .totals{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+  @media (max-width:900px){ .totals{grid-template-columns:1fr 1fr} }
+  .kpi{background:#fff;border:1px solid #eef; border-radius:12px; padding:10px}
+  .kpi b{font-size:16px}
+  .toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end}
+  .toolbar .input{min-width:180px}
+</style>
+<script type="module">
+import { db, seed } from '../scripts/db.js';
+seed();
+
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+
+window.addEventListener('DOMContentLoaded', ()=>{
+  // default to current month yyyy-mm
+  const d = new Date();
+  const ym = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+  $('#month').value = ym;
+
+  ['month','includeReturns','includeLab'].forEach(id=>{
+    $('#'+id).addEventListener('change', run);
+  });
+  $('#exportLines').addEventListener('click', exportLinesCsv);
+  $('#exportBuckets').addEventListener('click', exportBucketsCsv);
+
+  run();
+});
+
+function monthRange(ym){ // "YYYY-MM" -> {from,to} (to exclusive)
+  const [y,m]=ym.split('-').map(n=>+n);
+  const from = new Date(y,m-1,1);
+  const to = new Date(y,m,1);
+  // format as yyyy-mm-dd
+  const f = (dt)=> `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+  return { from: f(from), to: f(to) };
+}
+
+function add(a,b){ return +( (a||0) + (b||0) ).toFixed(2); }
+function to2(n){ return (+(n||0)).toFixed(2); }
+
+let latestLines = [];   // cached itemized rows for export
+let latestBuckets = []; // cached bucket summary for export
+
+async function run(){
+  const ym = $('#month').value;
+  if(!ym){ alert('Pick a month'); return; }
+  const {from,to} = monthRange(ym);
+  const includeReturns = $('#includeReturns').checked;
+  const includeLab = $('#includeLab').checked;
+
+  // Pull invoices in month
+  const allInv = await db.invoices.toArray().catch(()=>[]);
+  const inv = allInv.filter(x=>{
+    return x.date && x.date >= from && x.date < to
+      && ( includeLab ? ['sale','return','lab'].includes(x.type) : ['sale','return'].includes(x.type) );
+  });
+
+  // Build invoiceId -> meta
+  const byId = new Map(inv.map(i=>[i.id,i]));
+  const ids = inv.map(i=>i.id);
+
+  // Pull items across these invoices
+  let items = await db.invoiceItems
+    .where('invoiceId').anyOf(ids)
+    .toArray()
+    .catch(()=>[]);
+
+  // Join & normalize line rows
+  const rows = [];
+  for(const it of items){
+    const p = byId.get(it.invoiceId);
+    if(!p) continue;
+    // skip returns if excluded
+    if(!includeReturns && p.type === 'return') continue;
+
+    const qty = +it.qty || 0;
+    const rate = +it.rate || 0;
+    const base = +(qty * rate).toFixed(2);
+    const gstPct = +it.gstPct || 0;
+    const tax = +(base * (gstPct/100)).toFixed(2);
+    const sgst = +(tax/2).toFixed(2);
+    const cgst = +(tax/2).toFixed(2);
+    const gross = +(base + tax).toFixed(2);
+
+    rows.push({
+      date: p.date,
+      invoiceId: p.id,
+      type: p.type,
+      patientId: p.patientId || '',
+      doctor: p.doctor || '',
+      name: it.name || '',
+      gstPct,
+      qty: +qty,
+      rate: +rate,
+      taxable: base,
+      sgst, cgst,
+      total: gross
+    });
+  }
+
+  latestLines = rows;
+
+  // Aggregate by GST%
+  const bucketMap = new Map(); // rate -> {taxable, sgst, cgst, total}
+  let gTaxable=0, gSgst=0, gCgst=0, gTotal=0;
+  rows.forEach(r=>{
+    const k = r.gstPct;
+    if(!bucketMap.has(k)) bucketMap.set(k,{gstPct:k, taxable:0, sgst:0, cgst:0, total:0});
+    const b = bucketMap.get(k);
+    b.taxable = add(b.taxable, r.taxable);
+    b.sgst = add(b.sgst, r.sgst);
+    b.cgst = add(b.cgst, r.cgst);
+    b.total = add(b.total, r.total);
+
+    gTaxable = add(gTaxable, r.taxable);
+    gSgst = add(gSgst, r.sgst);
+    gCgst = add(gCgst, r.cgst);
+    gTotal = add(gTotal, r.total);
+  });
+
+  // Sort buckets by rate
+  const buckets = Array.from(bucketMap.values()).sort((a,b)=>a.gstPct-b.gstPct);
+  latestBuckets = buckets;
+
+  // Render KPIs
+  $('#k-taxable').textContent = to2(gTaxable);
+  $('#k-sgst').textContent = to2(gSgst);
+  $('#k-cgst').textContent = to2(gCgst);
+  $('#k-total').textContent = to2(gTotal);
+  $('#context').textContent = `${ym} • ${includeLab?'Pharmacy + Lab':'Pharmacy only'} • ${includeReturns?'Returns included (net)':'Returns excluded'}`;
+
+  // Render bucket table
+  const bt = $('#bucketBody');
+  if(!buckets.length){
+    bt.innerHTML = `<tr><td colspan="5">No data in ${ym}</td></tr>`;
+  }else{
+    bt.innerHTML = buckets.map(b=>`
+      <tr>
+        <td>${b.gstPct}%</td>
+        <td class="right">₹ ${to2(b.taxable)}</td>
+        <td class="right">₹ ${to2(b.sgst)}</td>
+        <td class="right">₹ ${to2(b.cgst)}</td>
+        <td class="right">₹ ${to2(b.total)}</td>
+      </tr>
+    `).join('');
+  }
+
+  // Render sample itemized (top 50)
+  const itBody = $('#itemBody');
+  const top = rows.slice(0,50);
+  itBody.innerHTML = top.map(r=>`
+    <tr>
+      <td>${r.date}</td>
+      <td>#${r.invoiceId}</td>
+      <td>${r.type}</td>
+      <td>${r.name}</td>
+      <td class="right">${r.gstPct}%</td>
+      <td class="right">${r.qty}</td>
+      <td class="right">₹ ${to2(r.rate)}</td>
+      <td class="right">₹ ${to2(r.taxable)}</td>
+      <td class="right">₹ ${to2(r.sgst)}</td>
+      <td class="right">₹ ${to2(r.cgst)}</td>
+      <td class="right">₹ ${to2(r.total)}</td>
+    </tr>
+  `).join('');
+  $('#itemCount').textContent = `${rows.length} lines`;
+}
+
+/* ---------------- CSV Export ---------------- */
+function downloadCsv(name, rows){
+  const blob = new Blob([rows.join('\n')], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href=url; a.download=name;
+  document.body.appendChild(a); a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 500);
+}
+
+function exportLinesCsv(){
+  if(!latestLines?.length){ alert('Nothing to export.'); return; }
+  const header = ['Date','InvoiceId','Type','PatientId','Doctor','Item','GST%','Qty','Rate','Taxable','SGST','CGST','Total'];
+  const lines = [header.join(',')].concat(
+    latestLines.map(r=>[
+      r.date, r.invoiceId, r.type, q(r.patientId), q(r.doctor), q(r.name),
+      r.gstPct, r.qty, f(r.rate), f(r.taxable), f(r.sgst), f(r.cgst), f(r.total)
+    ].join(','))
+  );
+  downloadCsv(`gst-lines-${$('#month').value}.csv`, lines);
+}
+
+function exportBucketsCsv(){
+  if(!latestBuckets?.length){ alert('Nothing to export.'); return; }
+  const header = ['GST%','Taxable','SGST','CGST','Total'];
+  const lines = [header.join(',')].concat(
+    latestBuckets.map(b=>[b.gstPct, f(b.taxable), f(b.sgst), f(b.cgst), f(b.total)].join(','))
+  );
+  downloadCsv(`gst-buckets-${$('#month').value}.csv`, lines);
+}
+
+function f(n){ return (+(n||0)).toFixed(2); }
+function q(s){ // csv safe
+  const v = (s??'').toString();
+  if(/[",\n]/.test(v)) return `"${v.replace(/"/g,'""')}"`;
+  return v;
+}
+</script>
+</head>
+<body>
+<div class="wrap grid">
+
+  <div class="card">
+    <div class="row toolbar">
+      <h2>GST Report</h2>
+      <label>Month
+        <input id="month" type="month" class="input"/>
+      </label>
+      <label class="row" style="align-items:center;gap:6px">
+        <input id="includeReturns" type="checkbox" class="input" checked/>
+        <span>Include Returns (net)</span>
+      </label>
+      <label class="row" style="align-items:center;gap:6px">
+        <input id="includeLab" type="checkbox" class="input"/>
+        <span>Include Lab</span>
+      </label>
+      <div style="flex:1"></div>
+      <button id="exportBuckets" class="btn ghost" type="button">Export Bucket CSV</button>
+      <button id="exportLines" class="btn" type="button">Export Itemized CSV</button>
+    </div>
+    <div class="muted small" id="context"></div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin:0 0 6px">Totals</h3>
+    <div class="totals">
+      <div class="kpi"><div class="muted small">Taxable</div><b>₹ <span id="k-taxable">0.00</span></b></div>
+      <div class="kpi"><div class="muted small">SGST</div><b>₹ <span id="k-sgst">0.00</span></b></div>
+      <div class="kpi"><div class="muted small">CGST</div><b>₹ <span id="k-cgst">0.00</span></b></div>
+      <div class="kpi"><div class="muted small">Grand Total</div><b>₹ <span id="k-total">0.00</span></b></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin:0 0 6px">By GST %</h3>
+    <table class="table">
+      <thead>
+        <tr><th>GST %</th><th class="right">Taxable</th><th class="right">SGST</th><th class="right">CGST</th><th class="right">Total</th></tr>
+      </thead>
+      <tbody id="bucketBody"></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <h3 style="margin:0">Sample Lines <span class="muted small" id="itemCount"></span></h3>
+      <div class="muted small">Full dataset is in the CSV export.</div>
+    </div>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Date</th><th>Inv</th><th>Type</th><th>Item</th><th class="right">GST%</th>
+          <th class="right">Qty</th><th class="right">Rate</th><th class="right">Taxable</th>
+          <th class="right">SGST</th><th class="right">CGST</th><th class="right">Total</th>
+        </tr>
+      </thead>
+      <tbody id="itemBody"></tbody>
+    </table>
+  </div>
+
+</div>
+</body>
+</html>

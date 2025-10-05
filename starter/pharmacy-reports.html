@@ -1,0 +1,70 @@
+<!-- /pharmacy-reports.html -->
+<!doctype html><html lang="en"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Pharmacy Reports · Clinic PWA</title>
+<link rel="stylesheet" href="/styles/styles.css"/>
+<script defer src="https://cdn.jsdelivr.net/npm/dexie@4.0.8/dist/dexie.min.js"></script>
+<script type="module">
+import { seed, db } from '/scripts/db.js';
+import { requireRole } from '/scripts/auth.js';
+import { mountNav } from '/scripts/ui.js';
+seed(); requireRole(['doctor','supervisor']);
+window.addEventListener('DOMContentLoaded', async ()=>{
+  mountNav('pharmacy');
+  const expiryList = document.getElementById('expiryList');
+  const gstList = document.getElementById('gstList');
+
+  // Expiry within next 90 days
+  const inv = await db.inventory.toArray();
+  const now = new Date();
+  const soon = new Date(); soon.setDate(soon.getDate()+90);
+  const exp = inv.filter(r=>{
+    if(!r.expiry) return false;
+    const d = new Date(r.expiry+'-01');
+    return d>=now && d<=soon;
+  }).sort((a,b)=> new Date(a.expiry||'2999-12') - new Date(b.expiry||'2999-12'));
+  expiryList.innerHTML = exp.map(r=>`
+    <tr><td>${r.sku}</td><td>${r.name||''}</td><td>${r.batch||''}</td><td>${r.expiry||''}</td><td>${r.stock||0}</td></tr>
+  `).join('') || `<tr><td colspan="5">No upcoming expiries</td></tr>`;
+
+  // GST snapshot (current month, sales only)
+  const mstart = new Date(); mstart.setDate(1);
+  const mend = new Date(mstart); mend.setMonth(mstart.getMonth()+1);
+  const sales = (await db.invoices.toArray()).filter(i=>{
+    const d = new Date(i.date||'');
+    return i.type==='sale' && d>=mstart && d<mend;
+  });
+  if(sales.length===0){
+    gstList.innerHTML = `<tr><td colspan="4">No sales this month</td></tr>`;
+  }else{
+    const taxable = sales.reduce((a,b)=>a+(+b.total||0),0);
+    const tax = sales.reduce((a,b)=>a+(+b.tax||0),0);
+    const grand = sales.reduce((a,b)=>a+(+b.grand||0),0);
+    gstList.innerHTML = `
+      <tr><td>Current Month</td><td>₹${taxable.toFixed(2)}</td><td>₹${(tax/2).toFixed(2)} + ₹${(tax/2).toFixed(2)}</td><td>₹${grand.toFixed(2)}</td></tr>
+    `;
+  }
+});
+</script>
+</head>
+<body>
+<div id="nav"></div>
+<div class="wrap grid">
+  <div class="card">
+    <h2>Reports</h2>
+    <h3>Expiry Alerts (≤ 90 days)</h3>
+    <table class="table">
+      <thead><tr><th>SKU</th><th>Name</th><th>Batch</th><th>Expiry</th><th>Stock</th></tr></thead>
+      <tbody id="expiryList"></tbody>
+    </table>
+  </div>
+  <div class="card">
+    <h3>GST Snapshot (Sales · This Month)</h3>
+    <table class="table">
+      <thead><tr><th>Period</th><th>Taxable</th><th>SGST + CGST</th><th>Grand</th></tr></thead>
+      <tbody id="gstList"></tbody>
+    </table>
+  </div>
+</div>
+</body>
+</html>

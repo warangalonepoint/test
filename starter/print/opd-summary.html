@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>OPD Summary · Print View</title>
+<link rel="stylesheet" href="../styles/styles.css"/>
+<script defer src="https://cdn.jsdelivr.net/npm/dexie@4.0.8/dist/dexie.min.js"></script>
+<style>
+body {
+  font-family: system-ui, sans-serif;
+  background: #fff;
+  color: #111;
+  margin: 20px;
+}
+.header, .footer {
+  text-align: center;
+  margin-bottom: 10px;
+}
+.header h2 {
+  margin: 0;
+  font-size: 22px;
+  text-transform: uppercase;
+}
+.subhead {
+  font-size: 13px;
+  color: #555;
+  margin-top: 4px;
+}
+.section {
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  margin-top: 12px;
+  padding: 10px 12px;
+}
+.section h3 {
+  margin: 0 0 6px;
+  border-bottom: 1px solid #ddd;
+  font-size: 15px;
+  padding-bottom: 3px;
+}
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.table td, .table th {
+  border: 1px solid #ccc;
+  padding: 4px 6px;
+  vertical-align: top;
+}
+.vitals-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit,minmax(130px,1fr));
+  gap: 6px;
+}
+.vital {
+  font-size: 13px;
+  border: 1px solid #eee;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: #fafafa;
+}
+.footer {
+  margin-top: 40px;
+  font-size: 12px;
+  color: #555;
+}
+.footer small {display:block;margin-top:4px}
+.watermark {
+  position: fixed;
+  top: 40%;
+  left: 50%;
+  transform: translate(-50%, -50%) rotate(-30deg);
+  font-size: 48px;
+  color: rgba(0,0,0,0.05);
+  pointer-events: none;
+}
+@media print {
+  body { margin: 10mm; }
+  .no-print { display: none !important; }
+  .section { page-break-inside: avoid; }
+}
+</style>
+
+<script type="module">
+import { db } from '../scripts/db.js';
+
+window.addEventListener('DOMContentLoaded', async ()=>{
+  const id = new URLSearchParams(location.search).get('id');
+  if(!id){ document.body.innerHTML = '<h3>No OPD ID provided</h3>'; return; }
+
+  try {
+    const rec = await db.OPD.get(Number(id)) || await db.OPD.get(id);
+    if(!rec){ document.body.innerHTML = '<h3>OPD record not found</h3>'; return; }
+    render(rec);
+  } catch(err){
+    document.body.innerHTML = '<h3>Error loading record</h3><pre>'+err+'</pre>';
+  }
+});
+
+function render(r){
+  const ageY = Math.floor((r.ageMonths||0)/12);
+  const ageM = (r.ageMonths||0)%12;
+  const ageStr = `${ageY}y ${ageM}m`;
+
+  $('#clinicName').textContent = r.doctor ? (r.doctor+"'s Clinic") : "Clinic Record";
+  $('#pid').textContent = r.patientId||'';
+  $('#pname').textContent = r.name||'';
+  $('#page').textContent = ageStr;
+  $('#psex').textContent = r.sex==='F'?'Girl':'Boy';
+  $('#pdate').textContent = r.date||'';
+
+  $('#complaints').textContent = r.complaints||'-';
+  $('#diagnosis').textContent = r.diagnosis||'-';
+  $('#recommend').textContent = r.recommendations||'-';
+  $('#temp').textContent = r.temp||'-';
+  $('#height').textContent = r.height||'-';
+  $('#weight').textContent = r.weight||'-';
+  $('#bmi').textContent = r.bmi ? r.bmi.toFixed?.(1) : '-';
+  $('#bsa').textContent = r.bsa ? r.bsa.toFixed?.(2) : '-';
+
+  // Medications
+  const meds = (r.medications||'').split(/\n|;/).map(s=>s.trim()).filter(Boolean);
+  $('#medBody').innerHTML = meds.length
+    ? meds.map((m,i)=>`<tr><td>${i+1}</td><td>${m.replace(/\|/g,' | ')}</td></tr>`).join('')
+    : '<tr><td colspan="2">—</td></tr>';
+
+  // Labs if any
+  const labs = (r.labTests||'').split(',').map(s=>s.trim()).filter(Boolean);
+  $('#labList').innerHTML = labs.length
+    ? labs.map(l=>`<li>${l}</li>`).join('')
+    : '<li>—</li>';
+}
+
+function $(s){return document.querySelector(s);}
+</script>
+</head>
+<body>
+<div class="watermark">Clinic Copy</div>
+
+<div class="header">
+  <h2 id="clinicName">Clinic</h2>
+  <div class="subhead">Outpatient Department Summary</div>
+</div>
+
+<div class="section">
+  <h3>Patient Details</h3>
+  <table class="table">
+    <tr><th>Patient ID</th><td id="pid"></td><th>Name</th><td id="pname"></td></tr>
+    <tr><th>Age</th><td id="page"></td><th>Sex</th><td id="psex"></td></tr>
+    <tr><th>Date</th><td id="pdate"></td><th>Doctor</th><td id="clinicName"></td></tr>
+  </table>
+</div>
+
+<div class="section">
+  <h3>Vitals</h3>
+  <div class="vitals-grid">
+    <div class="vital">Height: <b id="height">—</b> cm</div>
+    <div class="vital">Weight: <b id="weight">—</b> kg</div>
+    <div class="vital">Temp: <b id="temp">—</b> °F</div>
+    <div class="vital">BMI: <b id="bmi">—</b></div>
+    <div class="vital">BSA: <b id="bsa">—</b></div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>Complaints</h3>
+  <div id="complaints"></div>
+</div>
+
+<div class="section">
+  <h3>Diagnosis</h3>
+  <div id="diagnosis"></div>
+</div>
+
+<div class="section">
+  <h3>Medications</h3>
+  <table class="table">
+    <thead><tr><th>#</th><th>Drug / Instructions</th></tr></thead>
+    <tbody id="medBody"></tbody>
+  </table>
+</div>
+
+<div class="section">
+  <h3>Lab Orders</h3>
+  <ul id="labList" style="margin:0;padding-left:18px"></ul>
+</div>
+
+<div class="section">
+  <h3>Doctor Recommendations / Notes</h3>
+  <div id="recommend"></div>
+</div>
+
+<div class="footer">
+  <div>Thank you for visiting</div>
+  <small>Authorized Signatory</small>
+</div>
+</body>
+</html>

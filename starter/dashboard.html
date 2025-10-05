@@ -1,0 +1,90 @@
+<!doctype html><html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Dashboard · Clinic PWA</title>
+<link rel="stylesheet" href="/styles/styles.css"/>
+<script defer src="https://cdn.jsdelivr.net/npm/dexie@4.0.8/dist/dexie.min.js"></script>
+<script type="module">
+import { seed } from '/scripts/db.js';
+import { requireRole } from '/scripts/auth.js';
+import { mountNav } from '/scripts/ui.js';
+
+seed(); requireRole(['doctor','supervisor','front']);
+
+window.addEventListener('DOMContentLoaded', ()=>{
+  mountNav('dashboard');
+});
+</script>
+<style>
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}
+.tile{background:#fff;border-radius:16px;padding:18px;box-shadow:0 8px 20px rgba(0,0,0,.06)}
+.tile h3{margin:0 0 8px;font-size:18px}
+.tile p{margin:0 0 12px;color:#6b7280;font-size:13px}
+.tile a{display:inline-block;background:#17B26A;color:#fff;padding:8px 12px;border-radius:10px;text-decoration:none;font-size:13px}
+.ghost{background:#eef2ff;color:#3730a3}
+</style>
+</head>
+<body>
+<div id="nav"></div>
+
+<div class="wrap">
+  <h2>Dashboard</h2>
+  <div class="tiles">
+    <div class="tile">
+      <h3>Patients</h3>
+      <p>Hub with OPD and history.</p>
+      <a href="/patients.html">Open Patients</a>
+    </div>
+
+    <div class="tile">
+      <h3>OPD</h3>
+      <p>Record vitals, meds, growth.</p>
+      <a class="ghost" href="/OPD.html">Open OPD</a>
+    </div>
+
+    <div class="tile">
+      <h3>Patient History</h3>
+      <p>Past visits, vitals, export CSV/PDF.</p>
+      <a class="ghost" href="/patients-history.html">Open History</a>
+    </div>
+
+    <div class="tile">
+      <h3>Bookings</h3>
+      <p>Queue with tokens & PID.</p>
+      <a class="ghost" href="/bookings.html">Open Bookings</a>
+    </div>
+
+    <div class="tile">
+      <h3>Pharmacy</h3>
+      <p>Inventory, sales, returns, GST.</p>
+      <a class="ghost" href="/pharmacy.html">Open Pharmacy</a>
+    </div>
+
+    <div class="tile">
+      <h3>Lab</h3>
+      <p>Orders, queue, printable bills.</p>
+      <a class="ghost" href="/lab.html">Open Lab</a>
+    </div>
+
+    <div class="tile">
+      <h3>Reports</h3>
+      <p>Combined invoices, GST, monthly.</p>
+      <a class="ghost" href="/pages/gst-report.html">Open Reports</a>
+    </div>
+
+    <div class="tile">
+      <h3>Backup & Restore</h3>
+      <p>Export/import DB JSON snapshot.</p>
+      <a class="ghost" href="/backup.html">Open Backup</a>
+    </div>
+
+    <div class="tile">
+      <h3>Settings</h3>
+      <p>PINs, preferences, theme.</p>
+      <a class="ghost" href="/settings.html">Open Settings</a>
+    </div>
+  </div>
+</div>
+</body>
+</html>
