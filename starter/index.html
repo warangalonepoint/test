@@ -1,0 +1,94 @@
+<!doctype html><html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Clinic PWA · Home</title>
+<link rel="stylesheet" href="/styles/styles.css"/>
+<link rel="manifest" href="/public/manifest.webmanifest"/>
+<script defer src="https://cdn.jsdelivr.net/npm/dexie@4.0.8/dist/dexie.min.js"></script>
+<script type="module">
+import { seed } from '/scripts/db.js';
+import { requireRole } from '/scripts/auth.js';
+import { mountNav } from '/scripts/ui.js';
+
+seed(); requireRole(['doctor','supervisor','front']);
+
+window.addEventListener('DOMContentLoaded', ()=>{
+  mountNav('home');
+});
+</script>
+<style>
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-top:20px}
+.tile{background:#fff;border-radius:16px;padding:18px;box-shadow:0 6px 18px rgba(0,0,0,.06);transition:.2s}
+.tile:hover{transform:translateY(-3px);box-shadow:0 8px 22px rgba(0,0,0,.12)}
+.tile h3{margin:0 0 8px;font-size:18px}
+.tile p{margin:0 0 12px;color:#6b7280;font-size:13px}
+.tile a{display:inline-block;background:#17B26A;color:#fff;padding:8px 12px;border-radius:10px;text-decoration:none;font-size:13px}
+.ghost{background:#eef2ff;color:#3730a3}
+</style>
+</head>
+<body>
+<div id="nav"></div>
+
+<div class="wrap">
+  <h2>Welcome to Pediatric Clinic PWA</h2>
+  <p class="muted">Choose a module below to get started.</p>
+
+  <div class="tiles">
+    <div class="tile">
+      <h3>Patients Hub</h3>
+      <p>Access OPD records and full history in one place.</p>
+      <a href="/patients.html">Open Patients</a>
+    </div>
+
+    <div class="tile">
+      <h3>Bookings</h3>
+      <p>Queue with tokens (#, #O, #W), auto PID, OPD handoff.</p>
+      <a class="ghost" href="/bookings.html">Open Bookings</a>
+    </div>
+
+    <div class="tile">
+      <h3>OPD</h3>
+      <p>Create a new visit, record vitals, meds, growth + vaccines.</p>
+      <a class="ghost" href="/OPD.html">Open OPD</a>
+    </div>
+
+    <div class="tile">
+      <h3>Patient History</h3>
+      <p>Review past visits, vitals, and export PDF/CSV.</p>
+      <a class="ghost" href="/patients-history.html">Open History</a>
+    </div>
+
+    <div class="tile">
+      <h3>Pharmacy</h3>
+      <p>Inventory, sales, returns, GST & FEFO reports.</p>
+      <a class="ghost" href="/pharmacy.html">Open Pharmacy</a>
+    </div>
+
+    <div class="tile">
+      <h3>Lab</h3>
+      <p>Lab orders, queue, printable lab bills.</p>
+      <a class="ghost" href="/lab.html">Open Lab</a>
+    </div>
+
+    <div class="tile">
+      <h3>Reports</h3>
+      <p>Combined invoice, GST breakdown, monthly exports.</p>
+      <a class="ghost" href="/pages/gst-report.html">Open Reports</a>
+    </div>
+
+    <div class="tile">
+      <h3>Backup & Restore</h3>
+      <p>Export or import full database as JSON for safety.</p>
+      <a class="ghost" href="/backup.html">Open Backup</a>
+    </div>
+
+    <div class="tile">
+      <h3>Settings</h3>
+      <p>Manage login PINs, preferences, theme.</p>
+      <a class="ghost" href="/settings.html">Open Settings</a>
+    </div>
+  </div>
+</div>
+</body>
+</html>

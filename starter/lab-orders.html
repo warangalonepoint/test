@@ -1,0 +1,163 @@
+<!doctype html><html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Lab Orders Queue · Clinic PWA</title>
+<link rel="stylesheet" href="./styles/styles.css"/>
+<script defer src="https://cdn.jsdelivr.net/npm/dexie@4.0.8/dist/dexie.min.js"></script>
+<style>
+  .small{font-size:12px}.muted{opacity:.7}.row-gap{gap:10px}
+  .pill{padding:2px 8px;border-radius:999px;background:#eef2ff}
+  details > summary {cursor:pointer}
+  .kvs{display:grid;grid-template-columns:140px 1fr;gap:6px}
+</style>
+<script type="module">
+import { db, seed } from './scripts/db.js';
+import { requireRole } from './scripts/auth.js';
+import { mountNav } from './scripts/ui.js';
+import { fmt } from './scripts/utils.js';
+
+seed(); requireRole(['doctor','supervisor','front']);
+const $=s=>document.querySelector(s);
+let mode='today';
+let q='';
+
+window.addEventListener('DOMContentLoaded',()=>{
+  mountNav('lab');
+  bindUI();
+  refresh();
+});
+
+function bindUI(){
+  $('#toggleScope').addEventListener('click',()=>{
+    mode = (mode==='today'?'all':'today');
+    $('#toggleScope').textContent = mode==='today'?'Showing: Today':'Showing: All';
+    refresh();
+  });
+  $('#search').addEventListener('input',()=>{ q=$('#search').value.trim().toLowerCase(); refresh(); });
+}
+
+async function fetchRows(){
+  let rows=await db.labQueue.toArray();
+  if(mode==='today'){
+    const today=fmt.date();
+    rows=rows.filter(r=>r.date===today);
+  }
+  if(q){
+    rows=rows.filter(r=>{
+      const names = (r.items||[]).map(i=>i.name||'').join(' ');
+      return (r.patientId||'').toLowerCase().includes(q) ||
+             (r.doctor||'').toLowerCase().includes(q) ||
+             names.toLowerCase().includes(q);
+    });
+  }
+  rows.sort((a,b)=> (a.ts||0)-(b.ts||0));
+  return rows;
+}
+
+function total(r){
+  return (r.items||[]).reduce((s,i)=>s+(+i.price||0),0);
+}
+
+async function refresh(){
+  const body=$('#queue');
+  const rows=await fetchRows();
+  if(!rows.length){ body.innerHTML='<tr><td colspan="6">No lab orders</td></tr>'; return; }
+  body.innerHTML=rows.map(r=>{
+    const names=(r.items||[]).map(i=>i.name).join(', ');
+    const t=total(r).toFixed(2);
+    const resState = r.results && Object.keys(r.results).length ? 'results' : 'pending';
+    return `<tr data-id="${r.id}">
+      <td><b>${r.patientId}</b><br><span class="muted small">${r.doctor||''}</span></td>
+      <td>${names||'-'}</td>
+      <td>₹${t}</td>
+      <td>${r.date||''}<br><span class="muted small">${new Date(r.ts).toLocaleTimeString()}</span></td>
+      <td><span class="pill small">${r.status||'ordered'}</span><br><span class="muted small">${resState}</span></td>
+      <td class="row" style="gap:6px;flex-wrap:wrap">
+        <button class="btn" data-act="bill">Create Lab Bill</button>
+        <button class="btn ghost" data-act="results">Enter Results</button>
+        <button class="btn danger ghost" data-act="cancel">Cancel</button>
+      </td>
+    </tr>
+    <tr><td colspan="6">
+      <details class="small" data-resdrawer="${r.id}">
+        <summary>Results</summary>
+        <div class="kvs" style="margin-top:6px">${(r.items||[]).map(it=>`
+          <label>${it.name}</label><input class="input" data-res="${it.code}" placeholder="value / remark" />
+        `).join('')}</div>
+        <div class="row" style="margin-top:8px;gap:8px">
+          <button class="btn ghost" data-res-act="save" data-id="${r.id}">Save Results</button>
+          <button class="btn" data-res-act="complete" data-id="${r.id}">Mark Completed</button>
+        </div>
+      </details>
+    </td></tr>`;
+  }).join('');
+
+  // wire actions
+  body.querySelectorAll('tr[data-id]').forEach(tr=>{
+    const id=Number(tr.getAttribute('data-id'));
+    tr.querySelector('[data-act="bill"]').addEventListener('click', async ()=>{
+      const row=await db.labQueue.get(id); if(!row) return;
+      const draft={
+        patientId: row.patientId,
+        doctor: row.doctor||'',
+        items: (row.items||[]).map(i=>({code:i.code, name:i.name, price:+i.price||0})),
+        sourceLabId: id
+      };
+      localStorage.setItem('labBillDraft', JSON.stringify(draft));
+      window.location.href='lab-bill.html';
+    });
+    tr.querySelector('[data-act="results"]').addEventListener('click', ()=>{
+      const d=document.querySelector(`[data-resdrawer="${id}"]`);
+      d.open = !d.open;
+    });
+    tr.querySelector('[data-act="cancel"]').addEventListener('click', async ()=>{
+      if(confirm('Cancel this lab order?')){ await db.labQueue.delete(id); refresh(); }
+    });
+  });
+
+  // wire result buttons
+  body.querySelectorAll('[data-res-act]').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const id=Number(btn.getAttribute('data-id'));
+      const row=await db.labQueue.get(id); if(!row) return;
+      const drawer=document.querySelector(`[data-resdrawer="${id}"]`);
+      const inputs=drawer.querySelectorAll('input[data-res]');
+      const results={};
+      inputs.forEach(inp=>{ if(inp.value.trim()) results[inp.getAttribute('data-res')] = inp.value.trim(); });
+      if(btn.getAttribute('data-res-act')==='save'){
+        await db.labQueue.update(id,{results});
+        alert('Results saved');
+      }else{
+        await db.labQueue.update(id,{results, status:'completed'});
+        alert('Marked completed');
+        refresh();
+      }
+    });
+  });
+}
+</script>
+</head>
+<body>
+<div id="nav"></div>
+
+<div class="wrap grid">
+  <div class="card">
+    <div class="toolbar">
+      <h2>Lab Orders Queue</h2>
+      <button id="toggleScope" class="btn ghost">Showing: Today</button>
+      <input id="search" class="input" placeholder="Search test / PID / doctor" />
+    </div>
+  </div>
+
+  <div class="card">
+    <table class="table">
+      <thead><tr>
+        <th>Patient</th><th>Tests</th><th>Total</th><th>When</th><th>Status</th><th>Actions</th>
+      </tr></thead>
+      <tbody id="queue"></tbody>
+    </table>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,53 @@
+<!doctype html><html lang="en"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Lab Bill</title>
+<link rel="stylesheet" href="/styles/styles.css"/>
+<script defer src="https://cdn.jsdelivr.net/npm/dexie@4.0.8/dist/dexie.min.js"></script>
+<script type="module">
+import { requireRole } from '/scripts/auth.js';
+import { mountNav } from '/scripts/ui.js';
+import { loadOrder, addPayment, printLabBill } from '/scripts/lab.js';
+requireRole(['doctor','supervisor','front']);
+window.addEventListener('DOMContentLoaded', async ()=>{
+  mountNav('lab');
+  const id = Number(new URL(location.href).searchParams.get('id')||0);
+  const head = document.getElementById('head');
+  const body = document.getElementById('body');
+  const totals = document.getElementById('totals');
+
+  async function render(){
+    const o = await loadOrder(id);
+    head.textContent = `${o.patientName||''}  •  ${o.orderNo}  •  ${o.date}`;
+    body.innerHTML = (o.tests||[]).map(t=>`<tr><td>${t.code}</td><td>${t.name}</td><td>₹${(+t.price).toFixed(2)}</td></tr>`).join('');
+    totals.innerHTML = `<b>Total:</b> ₹${(+o.total).toFixed(2)} • <b>Paid:</b> ₹${(+o.paid).toFixed(2)} • <b>Due:</b> ₹${(+o.due).toFixed(2)}`;
+  }
+
+  document.getElementById('pay').addEventListener('click', async ()=>{
+    const amt = prompt('Collect amount (₹):','0'); if(amt===null) return;
+    await addPayment(id, Number(amt||0)); await render();
+  });
+  document.getElementById('print').addEventListener('click', ()=> printLabBill(id));
+
+  await render();
+});
+</script>
+</head>
+<body>
+<div id="nav"></div>
+<div class="wrap grid">
+  <div class="card">
+    <h2>Lab Bill</h2>
+    <div id="head" class="badge"></div>
+    <table class="table" style="margin-top:8px">
+      <thead><tr><th>Code</th><th>Test</th><th>Price</th></tr></thead>
+      <tbody id="body"></tbody>
+    </table>
+    <div id="totals" style="margin-top:8px"></div>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button class="btn" id="pay">Collect Payment</button>
+      <button class="btn ghost" id="print">Print</button>
+    </div>
+  </div>
+</div>
+</body>
+</html>

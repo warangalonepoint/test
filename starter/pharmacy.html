@@ -1,0 +1,85 @@
+<!-- pharmacy.html -->
+<!doctype html><html lang="en"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Pharmacy Hub · Clinic PWA</title>
+<link rel="stylesheet" href="/styles/styles.css"/>
+<script defer src="https://cdn.jsdelivr.net/npm/dexie@4.0.8/dist/dexie.min.js"></script>
+<script type="module">
+import { seed } from '/scripts/db.js';
+import { requireRole } from '/scripts/auth.js';
+import { mountNav } from '/scripts/ui.js';
+seed(); requireRole(['doctor','supervisor','front']);
+window.addEventListener('DOMContentLoaded', ()=>{
+  mountNav('pharmacy');
+});
+</script>
+<style>
+/* ---- Pastel multicolour cards ---- */
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit,minmax(220px,1fr));
+  gap: 16px;
+  margin-top: 12px;
+}
+.card {
+  border-radius: 16px;
+  padding: 16px;
+  text-align: center;
+  color: #1e293b;
+  font-weight: 600;
+  text-decoration: none;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.05);
+  transition: transform .15s ease, box-shadow .15s ease;
+}
+.card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 20px rgba(0,0,0,0.08);
+}
+.card:nth-child(1){ background:#f3e8ff; }   /* lavender */
+.card:nth-child(2){ background:#ffe4e6; }   /* pink */
+.card:nth-child(3){ background:#fef3c7; }   /* amber */
+.card:nth-child(4){ background:#ccfbf1; }   /* teal */
+.card:nth-child(5){ background:#ede9fe; }   /* violet */
+.card:nth-child(6){ background:#e0f2fe; }   /* soft blue for Finance */
+.badge {
+  display:block;
+  margin-top:6px;
+  font-size:13px;
+  opacity:.7;
+}
+ul{list-style:none;padding:0;margin:0;display:grid;gap:6px}
+li .btn{width:100%;text-align:center}
+@media (max-width:600px){ .tiles{grid-template-columns:1fr 1fr;} }
+</style>
+</head>
+<body>
+<div id="nav"></div>
+
+<div class="wrap grid">
+  <div class="card" style="background:#fff">
+    <div class="row" style="align-items:center;justify-content:space-between">
+      <h2>Pharmacy Hub</h2>
+      <a href="javascript:history.back()" class="btn ghost">← Back</a>
+    </div>
+
+    <div class="grid tiles">
+      <a class="card" href="/pharmacy-inventory.html"><b>Inventory</b><div class="badge">Add / Edit / CSV</div></a>
+      <a class="card" href="/pharmacy-purchases.html"><b>Purchases</b><div class="badge">Stock In</div></a>
+      <a class="card" href="/pharmacy-sales.html"><b>Sales</b><div class="badge">Billing</div></a>
+      <a class="card" href="/pharmacy-returns.html"><b>Returns</b><div class="badge">Customer → Store</div></a>
+      <a class="card" href="/pharmacy-reports.html"><b>Reports</b><div class="badge">Expiry, GST</div></a>
+      <a class="card" href="/pharmacy-queue.html"><b>OPD Queue</b><div class="badge">Stock In</div></a>
+
+      <div class="card">
+        <b>Finance & GST</b>
+        <ul>
+          <li><a href="/pages/gst-report.html" class="btn ghost">GST Report</a></li>
+          <li><a href="/pages/gst-rebuild.html" class="btn ghost">GST Month Rebuild</a></li>
+          <li><a href="/pages/data-audit.html" class="btn ghost">Data Audit</a></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

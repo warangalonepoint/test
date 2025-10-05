@@ -1,0 +1,89 @@
+<!-- /pharmacy-returns.html -->
+<!doctype html><html lang="en"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Pharmacy Returns · Clinic PWA</title>
+<link rel="stylesheet" href="/styles/styles.css"/>
+<script defer src="https://cdn.jsdelivr.net/npm/dexie@4.0.8/dist/dexie.min.js"></script>
+<script type="module">
+import { seed } from '/scripts/db.js';
+import { requireRole } from '/scripts/auth.js';
+import { mountNav } from '/scripts/ui.js';
+import { createInvoice, addInvoiceItem, loadInvoice, printInvoice } from '/scripts/rx.js';
+seed(); requireRole(['doctor','supervisor','front']);
+let current;
+window.addEventListener('DOMContentLoaded', async ()=>{
+  mountNav('pharmacy');
+  current = await createInvoice({type:'return'});
+  document.getElementById('invNo').textContent = current.number;
+
+  const f = document.getElementById('f');
+  const list = document.getElementById('list');
+  const totals = document.getElementById('totals');
+
+  async function refresh(){
+    const { inv, items } = await loadInvoice(current.id);
+    list.innerHTML = items.map(it=>`
+      <tr>
+        <td>${it.sku}</td><td>${it.name||''}</td>
+        <td>${it.qty}</td><td>${(+it.rate).toFixed(2)}</td>
+        <td>${it.taxRate||0}%</td><td>${(+it.amount).toFixed(2)}</td>
+      </tr>`).join('');
+    totals.innerHTML = `<b>Taxable:</b> ₹${(+inv.total).toFixed(2)} • <b>Tax:</b> ₹${(+inv.tax).toFixed(2)} • <b>Grand:</b> ₹${(+inv.grand).toFixed(2)}`;
+  }
+
+  f.addEventListener('submit', async e=>{
+    e.preventDefault();
+    const d = Object.fromEntries(new FormData(f).entries());
+    await addInvoiceItem(current.id, {
+      sku:d.sku, name:d.name, qty:+d.qty, mrp:+d.mrp, rate:+d.rate, taxRate:+d.taxRate,
+      batch:d.batch, expiry:d.expiry
+    });
+    f.reset(); await refresh();
+  });
+
+  document.getElementById('print').addEventListener('click', ()=>{
+    printInvoice('return', current.id);
+  });
+
+  await refresh();
+});
+</script>
+</head>
+<body>
+<div id="nav"></div>
+<div class="wrap grid">
+  <div class="card">
+    <h2>Returns <span class="badge" id="invNo"></span></h2>
+    <form id="f" class="grid" style="gap:8px">
+      <div class="row">
+        <label>SKU <input class="input" name="sku" required/></label>
+        <label>Name <input class="input" name="name" required/></label>
+      </div>
+      <div class="row">
+        <label>Batch <input class="input" name="batch"/></label>
+        <label>Expiry (YYYY-MM) <input class="input" name="expiry" placeholder="2026-01"/></label>
+      </div>
+      <div class="row">
+        <label>Qty <input class="input" name="qty" type="number" step="1" required/></label>
+        <label>Rate <input class="input" name="rate" type="number" step="0.01" required/></label>
+      </div>
+      <div class="row">
+        <label>MRP <input class="input" name="mrp" type="number" step="0.01"/></label>
+        <label>GST % <input class="input" name="taxRate" type="number" step="1" value="12"/></label>
+      </div>
+      <button class="btn">Add Line</button>
+      <button class="btn ghost" type="button" id="print">Print</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h3>Lines</h3>
+    <table class="table">
+      <thead><tr><th>SKU</th><th>Name</th><th>Qty</th><th>Rate</th><th>GST</th><th>Amt</th></tr></thead>
+      <tbody id="list"></tbody>
+    </table>
+    <div id="totals" style="margin-top:8px"></div>
+  </div>
+</div>
+</body>
+</html>

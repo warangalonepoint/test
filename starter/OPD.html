@@ -1,0 +1,561 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>OPD · Clinic PWA</title>
+<link rel="stylesheet" href="./styles/styles.css"/>
+<link rel="stylesheet" href="./styles/pastels.css?v=4"/>
+<script defer src="https://cdn.jsdelivr.net/npm/dexie@4.0.8/dist/dexie.min.js"></script>
+<style>
+  .grid2{display:grid;grid-template-columns:1.2fr .8fr;gap:12px}
+  @media (max-width:1100px){ .grid2{grid-template-columns:1fr} }
+  .muted{opacity:.7} .row-gap{gap:10px}
+  .panel{display:grid;gap:12px}
+  .cardlite{border-radius:16px;padding:12px;background:var(--card-bg,#fff);
+    border:1px solid rgba(0,0,0,0.06);box-shadow:0 4px 10px rgba(0,0,0,0.05);}
+  .kpis{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+  @media (max-width:700px){ .kpis{grid-template-columns:1fr 1fr} }
+  .kpi{border:1px solid rgba(0,0,0,0.05);border-radius:12px;padding:10px;background:#fff}
+  .kpi .label{font-size:12px;opacity:.7;margin-bottom:6px}
+  .kpi .value{font-weight:700;font-size:18px}
+  .status{padding:6px 10px;border-radius:10px;font-size:13px;display:inline-block}
+  .status.normal{background:#ecfdf5;color:#065f46}
+  .status.low{background:#fef3c7;color:#92400e}
+  .status.high{background:#fee2e2;color:#991b1b}
+  .complaints-wrap{position:relative}
+  .chipbar{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+  .chip{border:1px solid #e5e7eb;background:#f8fafc;border-radius:999px;padding:4px 8px;font-size:12px;cursor:pointer}
+  .chip:hover{background:#eef2ff}
+  .typeahead{position:absolute;left:0;right:0;z-index:25;background:#fff;border:1px solid #e5e7eb;border-radius:10px;max-height:220px;overflow:auto;box-shadow:0 10px 20px rgba(0,0,0,.06)}
+  .typeahead .opt{padding:8px;border-bottom:1px dashed #f1f5f9;cursor:pointer}
+  .typeahead .opt:last-child{border-bottom:none}
+  .typeahead .opt:hover{background:#f1f5f9}
+
+  .btnbar{display:flex;flex-wrap:wrap;gap:8px}
+  .hint{font-size:12px;opacity:.7}
+
+  /* pastel tints like settings.html */
+  .card.gradient-lav{background:linear-gradient(145deg,#ede9fe,#f5f3ff);}
+  .card.gradient-pink{background:linear-gradient(145deg,#fce7f3,#fff1f2);}
+  .card.gradient-amber{background:linear-gradient(145deg,#fef3c7,#fffbeb);}
+  .card.gradient-teal{background:linear-gradient(145deg,#ccfbf1,#ecfeff);}
+  .card.gradient-violet{background:linear-gradient(145deg,#e9d5ff,#faf5ff);}
+</style>
+
+<script type="module">
+import { seed, db } from './scripts/db.js';
+import { requireRole } from './scripts/auth.js';
+import { mountNav } from './scripts/ui.js';
+import { fmt } from './scripts/utils.js';
+
+seed(); requireRole(['doctor','supervisor','front']);
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+
+/* ---------------- Complaints dictionary ---------------- */
+const COMPLAINTS_ALL = [
+  'Fever','Cough','Cold','Sore throat','Wheeze','Breathlessness','Ear pain','Ear discharge',
+  'Vomiting','Loose stools','Abdominal pain','Constipation','Decreased appetite',
+  'Rash','Itching','Eye redness','Headache','Dysuria','Bedwetting','Limping',
+  'Injury','Behavioral concerns','Poor weight gain','Weight loss','Not gaining height',
+  'Newborn check','Colic','Jaundice (neonate)','Feeding difficulty','Latching issue',
+  'Immunization / Vaccination','School health certificate','Routine check-up',
+  'Asthma follow-up','Allergic rhinitis','Anemia evaluation','Thyroid evaluation',
+  'UTI follow-up','Post-viral follow-up'
+];
+const QUICK_BY_BUCKET = {
+  'infant-early': ['Feeding difficulty','Colic','Jaundice (neonate)','Fever','Cough','Loose stools','Immunization / Vaccination','Newborn check'],
+  'infant-late':  ['Fever','Cough','Cold','Vomiting','Loose stools','Rash','Immunization / Vaccination','Poor weight gain'],
+  'preschool':    ['Fever','Cough','Cold','Wheeze','Abdominal pain','Vomiting','Loose stools','Immunization / Vaccination','Rash'],
+  'schooler':     ['Fever','Sore throat','Headache','Abdominal pain','Vomiting','Constipation','Rash','Injury','Allergic rhinitis'],
+  'adolescent':   ['Fever','Headache','Sore throat','Abdominal pain','Behavioral concerns','Not gaining height','Weight loss','Routine check-up']
+};
+function ageBucket(am){ if(am<6)return'infant-early'; if(am<24)return'infant-late'; if(am<60)return'preschool'; if(am<144)return'schooler'; return'adolescent'; }
+
+/* ---------------- Vax schedule (age-only) ---------------- */
+const VAX = [
+  {m:0,  name:'Birth', items:['BCG','OPV-0','HepB-1']},
+  {m:6,  name:'6 weeks', items:['DPT-1 / Pentavalent-1','OPV-1','PCV-1','Rotavirus-1']},
+  {m:10, name:'10 weeks', items:['DPT-2 / Pentavalent-2','OPV-2','PCV-2','Rotavirus-2']},
+  {m:14, name:'14 weeks', items:['DPT-3 / Pentavalent-3','OPV-3','PCV-3','Rotavirus-3']},
+  {m:9,  name:'9 months', items:['MR / MMR-1','OPV Booster','Vitamin A (1st)']},
+  {m:12, name:'12 months', items:['Typhoid (Conjugate)','HepA-1']},
+  {m:15, name:'15 months', items:['MMR-2','Varicella-1','PCV Booster']},
+  {m:16, name:'16–18 months', items:['DPT Booster-1','Hib Booster','OPV Booster']},
+  {m:24, name:'2 years', items:['Typhoid Booster (if due)','HepA-2 (if due)']},
+  {m:48, name:'4–6 years', items:['DPT Booster-2','OPV Booster','MMR-3 / Varicella-2']},
+  {m:120,name:'10 years', items:['Tdap / Td Booster','HPV (girls, as per program)']}
+];
+
+/* ---------------- Lab services cache ---------------- */
+let LAB_INDEX = [];
+async function loadLabIndex(){
+  try{
+    const r = await fetch('./data/lab_services.json', {cache:'no-store'});
+    const arr = await r.json();
+    LAB_INDEX = Array.isArray(arr) ? arr.map(x=>x.name || x.test || '').filter(Boolean) : [];
+  }catch{ LAB_INDEX = []; }
+}
+
+/* ---------------- Growth advice (dynamic import, fail-safe) ---------------- */
+let _growthMod = null;
+async function getGrowthAdvice(input){
+  try{
+    if(!_growthMod) _growthMod = await import('./scripts/growthSuggestions.js');
+    if(_growthMod?.growthAdvice) return await _growthMod.growthAdvice(input);
+  }catch(err){
+    console.warn('growthSuggestions.js load failed, using fallback', err);
+  }
+  const {heightCm, weightKg, ageMonths} = input;
+  let status='Normal', tip='Balanced diet; encourage active play; routine checks.';
+  if(heightCm>0 && weightKg>0){
+    const bmi = weightKg/Math.pow(heightCm/100,2);
+    if(bmi<13) { status='Below Average'; tip='Increase calorie-dense foods; monitor illness red flags.'; }
+    if(bmi>18) { status='Above Average'; tip='Portion control; reduce sugary drinks; outdoor activity.'; }
+  }
+  const basis = `fallback (BMI, age ${Math.floor((ageMonths||0)/12)}y ${(ageMonths||0)%12}m)`;
+  return {status, tip, basis};
+}
+
+/* ---------------- Init ---------------- */
+window.addEventListener('DOMContentLoaded', init);
+
+async function init(){
+  mountNav('opd');
+  await loadPatients();
+  await hydrateWithBestSource();
+  await loadLabIndex();
+  hookEvents();
+  wireComplaintSuggest();
+  wireLabSuggest();
+  wireMedQuickChips();
+  recomputeVitals();
+}
+
+/* ---------------- Patients + hydration ---------------- */
+async function loadPatients(){
+  const pts=await db.patients.toArray().catch(()=>[]);
+  pts.sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+  const sel=$('#patientId');
+  if(!sel) return;
+  sel.innerHTML = `<option value="">— choose —</option>` + pts.map(p=>`<option value="${p.id}">${p.id} — ${p.name||''} ${p.phone?('· '+p.phone):''}</option>`).join('');
+}
+
+async function hydrateWithBestSource(){
+  const setIf=(el,val,onlyIfEmpty=false)=>{ if(!el) return; if(val!=null && val!==''){ if(!onlyIfEmpty || !el.value){ el.value=String(val);} } };
+
+  try{
+    const draft = JSON.parse(localStorage.getItem('opdDraft')||'null');
+    if(draft?.patientId) $('#patientId').value = draft.patientId;
+    setIf($('#ageMonths'), draft?.ageMonths);
+    setIf($('#height'), draft?.heightCm);
+    setIf($('#weight'), draft?.weightKg);
+    if(draft?.complaints) $('#complaints').value = draft.complaints;
+  }catch{}
+
+  const pid = $('#patientId')?.value;
+  if(pid){
+    try{
+      const today = fmt.date();
+      const todays = await db.bookings.where('date').equals(today).toArray();
+      const hit = todays.filter(b=>b.patientId===pid).sort((a,b)=>(b.ts||0)-(a.ts||0))[0];
+      if(hit){
+        setIf($('#ageMonths'), hit.ageMonths, true);
+        setIf($('#height'), hit.heightCm, true);
+        setIf($('#weight'), hit.weightKg, true);
+        if(!$('#complaints').value && hit.reason) $('#complaints').value = hit.reason;
+      }
+    }catch{}
+    try{
+      const p = await db.patients.get(pid);
+      if(p?.dob && !$('#ageMonths').value){
+        const {y,m}=calcYM(p.dob);
+        $('#ageMonths').value=y*12+m;
+      }
+    }catch{}
+  }
+}
+
+function calcYM(dobStr){
+  const birth = new Date(String(dobStr).slice(0,10)+'T00:00:00');
+  const now = new Date();
+  let y = now.getFullYear()-birth.getFullYear();
+  let m = now.getMonth()-birth.getMonth();
+  if(now.getDate() < birth.getDate()) m--;
+  if(m<0){ y--; m+=12; }
+  return {y,m};
+}
+
+/* ---------------- Event hooks ---------------- */
+function hookEvents(){
+  ['height','weight','ageMonths','sex','temp','complaints'].forEach(id=>{
+    const n = $('#'+id); if(!n) return;
+    n.addEventListener('input', recomputeVitals);
+    n.addEventListener('change', recomputeVitals);
+  });
+  const pidSel = $('#patientId');
+  if(pidSel){
+    pidSel.addEventListener('change', async ()=>{
+      await hydrateWithBestSource();
+      recomputeVitals();
+    });
+  }
+  const form = $('#opdForm'); form?.addEventListener('submit', onSave);
+  $('#btnSendRx')?.addEventListener('click', onSendRx);
+  $('#btnCreateLab')?.addEventListener('click', onCreateLab);
+  $('#btnPrintLast')?.addEventListener('click', printLastVisit);
+}
+
+/* ---------------- Smart complaints ---------------- */
+function wireComplaintSuggest(){
+  const input = $('#complaints'), box = $('#complaintsTA'), chips = $('#complaintsChips');
+  if(!input || !chips) return;
+
+  const clean=s=> (s||'').trim().replace(/\s+/g,' ');
+  const parseList=()=> input.value.split(',').map(clean).filter(Boolean);
+  const renderList=list=> input.value = Array.from(new Set(list)).join(', ');
+
+  function appendComplaint(txt){
+    if(!txt) return;
+    const list=parseList();
+    if(!list.includes(txt)) list.push(txt);
+    renderList(list); input.focus();
+  }
+
+  const seedChips = ()=>{
+    const am = +($('#ageMonths')?.value||0);
+    const bucket = QUICK_BY_BUCKET[ageBucket(am)] || [];
+    chips.innerHTML = bucket.map(x=>`<span class="chip" data-val="${x}">${x}</span>`).join('');
+    chips.querySelectorAll('.chip').forEach(ch=>{
+      ch.addEventListener('click', ()=>appendComplaint(clean(ch.dataset.val)));
+    });
+  };
+  seedChips();
+  $('#ageMonths')?.addEventListener('input', seedChips);
+  $('#ageMonths')?.addEventListener('change', seedChips);
+
+  function updateTA(){
+    if(!box) return;
+    const q = clean(input.value.split(',').pop()||'').toLowerCase();
+    if(!q){ box.innerHTML=''; return; }
+    const hits = COMPLAINTS_ALL.filter(c=>c.toLowerCase().includes(q)).slice(0,8);
+    if(!hits.length){ box.innerHTML=''; return; }
+    box.innerHTML = `<div class="typeahead">
+      ${hits.map(h=>`<div class="opt" data-val="${h}">${h}</div>`).join('')}
+    </div>`;
+    box.querySelectorAll('.opt').forEach(opt=>{
+      opt.addEventListener('click', ()=>{
+        const val = clean(opt.dataset.val);
+        const parts = input.value.split(',');
+        parts[parts.length-1] = ' '+val;
+        renderList(parts.join(',').split(',').map(clean));
+        box.innerHTML=''; input.focus();
+      });
+    });
+  }
+  input.addEventListener('input', updateTA);
+  input.addEventListener('focus', updateTA);
+  document.addEventListener('click', (e)=>{ if(box && !box.contains(e.target) && e.target!==input) box.innerHTML=''; });
+}
+
+/* ---------------- Lab tests suggest ---------------- */
+function wireLabSuggest(){
+  const input = $('#labTests'), box = $('#labTA'), chips = $('#labChips');
+  if(!input || !chips) return;
+  const QUICK = ['CBC','CRP','Dengue NS1','Malaria (RDT)','Widal','Urine R/M','Chest X-ray','Throat swab','COVID Ag'];
+
+  chips.innerHTML = QUICK.map(x=>`<span class="chip" data-val="${x}">${x}</span>`).join('');
+  chips.querySelectorAll('.chip').forEach(ch=>ch.addEventListener('click', ()=>append(clean(ch.dataset.val))));
+
+  const clean = s => (s||'').trim().replace(/\s+/g,' ');
+  const parse = ()=> input.value.split(',').map(clean).filter(Boolean);
+  const render = list => input.value = Array.from(new Set(list)).join(', ');
+
+  function append(txt){ const list=parse(); if(!list.includes(txt)) list.push(txt); render(list); input.focus(); }
+
+  function update(){
+    const q = clean(input.value.split(',').pop()||'').toLowerCase();
+    if(!q){ box.innerHTML=''; return; }
+    const pool = LAB_INDEX.length ? LAB_INDEX : QUICK;
+    const hits = pool.filter(t=>t.toLowerCase().includes(q)).slice(0,8);
+    if(!hits.length){ box.innerHTML=''; return; }
+    box.innerHTML = `<div class="typeahead">
+      ${hits.map(h=>`<div class="opt" data-val="${h}">${h}</div>`).join('')}
+    </div>`;
+    box.querySelectorAll('.opt').forEach(opt=>{
+      opt.addEventListener('click', ()=>{
+        const val = clean(opt.dataset.val);
+        const parts = input.value.split(',');
+        parts[parts.length-1] = ' '+val;
+        render(parts.join(',').split(',').map(clean));
+        box.innerHTML=''; input.focus();
+      });
+    });
+  }
+  input.addEventListener('input', update);
+  input.addEventListener('focus', update);
+  document.addEventListener('click', (e)=>{ if(box && !box.contains(e.target) && e.target!==input) box.innerHTML=''; });
+}
+
+/* ---------------- Med quick chips ---------------- */
+function wireMedQuickChips(){
+  const box = $('#medChips'); if(!box) return;
+  const QUICK = [
+    'Paracetamol | 10 mg/kg | TDS | PO | 3 days | PRN fever',
+    'Cetirizine | 0.25 mg/kg | HS | PO | 5 days | allergy',
+    'Amoxicillin | 25 mg/kg | BD | PO | 5 days |',
+    'ORS ; Zinc | 5 ml | OD | PO | 14 days | diarrhea'
+  ];
+  box.innerHTML = QUICK.map(x=>`<span class="chip" data-val="${x}">${x.split('|')[0].trim()}</span>`).join('');
+  box.querySelectorAll('.chip').forEach(ch=>{
+    ch.addEventListener('click', ()=>{
+      const t = ch.getAttribute('data-val');
+      const ta = $('#medications');
+      ta.value = (ta.value ? (ta.value.trim()+'\n') : '') + t;
+      ta.focus();
+    });
+  });
+}
+
+/* ---------------- Vitals + Growth + Vax ---------------- */
+async function recomputeVitals(){
+  const h = parseFloat($('#height')?.value)||0;
+  const w = parseFloat($('#weight')?.value)||0;
+  const am = parseInt($('#ageMonths')?.value)||0;
+  const sex = $('#sex')?.value || 'M';
+
+  const bmi = (h>0 && w>0) ? (w/Math.pow(h/100,2)) : null;
+  const bsa = (h>0 && w>0) ? Math.sqrt((h*w)/3600) : null;
+
+  const bmiEl=$('#bmi'), bsaEl=$('#bsa'), ageYM=$('#ageYM');
+  if(bmiEl) bmiEl.textContent = bmi ? bmi.toFixed(2) : '—';
+  if(bsaEl) bsaEl.textContent = bsa ? bsa.toFixed(2) : '—';
+  if(ageYM) ageYM.textContent = `${Math.floor(am/12)}y ${am%12}m`;
+
+  const adv = await getGrowthAdvice({ageMonths:am, sex, heightCm:h, weightKg:w});
+  const statusClass = adv.status==='Below Average' ? 'low' : adv.status==='Above Average' ? 'high' : 'normal';
+  const gs=$('#growthStatus'), gt=$('#growthTip'), gb=$('#growthBasis');
+  if(gs){ gs.className = `status ${statusClass}`; gs.textContent = adv.status; }
+  if(gt) gt.textContent = adv.tip || '';
+  if(gb) gb.textContent = adv.basis || '';
+
+  renderVaccination(am);
+}
+function renderVaccination(ageMonths){
+  const due = VAX.filter(v=> Math.abs(ageMonths - v.m) <= 2 && ageMonths >= v.m );
+  const next = VAX.find(v=> v.m > ageMonths ) || null;
+  const dueEl=$('#vaxDue'), nextEl=$('#vaxNext');
+  if(dueEl) dueEl.innerHTML = due.length
+    ? due.map(v=>`<div><b>${v.name}</b>: ${v.items.join(', ')}</div>`).join('')
+    : '<div class="muted">No immediate vaccine due based on age alone.</div>';
+  if(nextEl) nextEl.innerHTML = next
+    ? `<div><b>${next.name}</b>: ${next.items.join(', ')}</div>`
+    : '<div class="muted">—</div>';
+}
+
+/* ---------------- Save OPD ---------------- */
+async function onSave(e){
+  e.preventDefault();
+  const role=localStorage.getItem('sessionRole'); if(role!=='doctor'){ alert('Read-only for your role'); return; }
+  const data=Object.fromEntries(new FormData(e.target).entries());
+  data.date = fmt.date(); data.ts = Date.now();
+  data.height = +data.height; data.weight = +data.weight; data.ageMonths = +data.ageMonths;
+  data.bmi = parseFloat($('#bmi')?.textContent)||null;
+  data.bsa = parseFloat($('#bsa')?.textContent)||null;
+  try{
+    const newId = await db.OPD.add(data);
+    alert('OPD saved');
+    window.open(`print/opd-summary.html?id=${encodeURIComponent(newId)}`, '_blank');
+    localStorage.removeItem('opdDraft');
+  }catch(err){
+    alert('Failed to save OPD: '+(err?.message||err));
+  }
+}
+
+/* ---------------- Print Last Visit ---------------- */
+async function printLastVisit(){
+  const pid = $('#patientId')?.value;
+  if(!pid){ alert('Select a patient'); return; }
+  let rows = await db.OPD.where('patientId').equals(pid).toArray().catch(()=>[]);
+  if(!rows.length){ alert('No OPD visits found for this patient.'); return; }
+  rows.sort((a,b)=>(b.ts||0)-(a.ts||0));
+  const last = rows[0];
+  if(!last?.id){ alert('Could not resolve last visit id'); return; }
+  window.open(`print/opd-summary.html?id=${encodeURIComponent(last.id)}`, '_blank');
+}
+
+/* ---------------- Rx Queue ---------------- */
+function parseMedications(text){
+  const lines = (text||'').split(/\n|;/).map(s=>s.trim()).filter(Boolean);
+  return lines.map(line=>{
+    const parts = line.includes('|') ? line.split('|').map(s=>s.trim()) : [line];
+    const [drugRaw,dosage,frequency,route,duration,remarks] = parts;
+    const drug = (drugRaw||'').split(',')[0].trim();
+    return { drug, dosage, frequency, route, duration, remarks };
+  }).filter(x=>x.drug);
+}
+async function onSendRx(){
+  const role=localStorage.getItem('sessionRole'); if(role!=='doctor'){ alert('Doctor only'); return; }
+  const patientId = $('#patientId')?.value; if(!patientId){ alert('Select a patient'); return; }
+  const meds = parseMedications($('#medications')?.value);
+  if(!meds.length){ alert('Enter medications'); return; }
+
+  const rx = {
+    ts: Date.now(), date: fmt.date(),
+    patientId, doctor: $('input[name="Dr.Charan Theja Reddy"]')?.value||'',
+    items: meds, source: 'opd', status: 'queued'
+  };
+  try{
+    if(!db.rxQueue) throw new Error('db.rxQueue table missing (check scripts/db.js)');
+    const id = await db.rxQueue.add(rx);
+    alert(`Rx queued (${meds.length} item${meds.length>1?'s':''}) · #${id}`);
+  }catch(err){
+    alert('Failed to queue Rx: '+(err?.message||err));
+  }
+}
+
+/* ---------------- Lab Queue ---------------- */
+function parseLabTests(text){
+  return (text||'').split(',').map(s=>s.trim()).filter(Boolean);
+}
+async function onCreateLab(){
+  const role=localStorage.getItem('sessionRole'); if(role!=='doctor'){ alert('Doctor only'); return; }
+  const patientId = $('#patientId')?.value; if(!patientId){ alert('Select a patient'); return; }
+  const tests = parseLabTests($('#labTests')?.value);
+  if(!tests.length){ alert('Add lab tests'); return; }
+
+  const order = {
+    ts: Date.now(), date: fmt.date(),
+    patientId, doctor: $('input[name="Dr.Charan Theja Reddy"]')?.value||'',
+    tests, source: 'opd', status: 'queued'
+  };
+  try{
+    if(!db.labQueue) throw new Error('db.labQueue table missing (check scripts/db.js)');
+    const id = await db.labQueue.add(order);
+    alert(`Lab order queued (${tests.length}) · #${id}`);
+  }catch(err){
+    alert('Failed to create lab order: '+(err?.message||err));
+  }
+}
+</script>
+</head>
+<body>
+<div id="nav"></div>
+
+<div class="wrap grid">
+  <div class="card gradient-lav">
+    <div class="row" style="align-items:center;gap:10px">
+      <h2>OPD Record</h2>
+      <div style="flex:1"></div>
+      <a class="btn ghost" href="./patients-history.html">Patient History</a>
+    </div>
+  </div>
+
+  <div class="grid2">
+    <!-- Left: Form -->
+    <div class="card gradient-pink">
+      <form id="opdForm" class="grid" style="gap:10px">
+        <div class="row">
+          <label>Patient <select class="input" name="patientId" id="patientId"></select></label>
+          <label>Doctor <input class="input" name="doctor" placeholder="Dr.Charan Theja Reddy"/></label>
+        </div>
+
+        <div class="row complaints-wrap">
+          <label style="flex:1">Complaints
+            <input class="input" id="complaints" name="complaints" placeholder="Comma-separated…"/>
+          </label>
+          <div id="complaintsTA"></div>
+        </div>
+        <div class="chipbar" id="complaintsChips"></div>
+
+        <div class="row">
+          <label>Diagnosis <input class="input" name="diagnosis" placeholder="..." /></label>
+        </div>
+
+        <div class="row">
+          <label>Height (cm) <input class="input" name="height" id="height" type="number" step="0.1"/></label>
+          <label>Weight (kg) <input class="input" name="weight" id="weight" type="number" step="0.1"/></label>
+        </div>
+
+        <div class="row">
+          <label>Age (months) <input class="input" name="ageMonths" id="ageMonths" type="number"/></label>
+          <label>Age <div class="input" style="display:flex;align-items:center;height:38px"><span id="ageYM">—</span></div></label>
+          <label>Sex
+            <select class="input" id="sex" name="sex"><option value="M">Boy</option><option value="F">Girl</option></select>
+          </label>
+        </div>
+
+        <label>Medications (one per line, or “;”. Use “|” parts: drug | dose | freq | route | days | remarks)
+          <textarea class="input" name="medications" id="medications" rows="4" placeholder="Paracetamol | 10 mg/kg | TDS | PO | 3 days | PRN fever&#10;ORS; Zinc | 5 ml | OD | PO | 14 days"></textarea>
+        </label>
+        <div class="hint">Quick add:</div>
+        <div class="chipbar" id="medChips"></div>
+
+        <div class="row">
+          <label style="flex:1">Lab tests (comma-separated)
+            <input class="input" id="labTests" placeholder="CBC, CRP, Dengue NS1"/>
+          </label>
+          <div id="labTA"></div>
+        </div>
+        <div class="chipbar" id="labChips"></div>
+
+        <label>Doctor Recommendations
+          <textarea class="input" name="recommendations" rows="2" placeholder="tips, next visit..."></textarea>
+        </label>
+
+        <div class="btnbar">
+          <button class="btn" type="submit">Save OPD</button>
+          <button class="btn ghost" type="button" id="btnSendRx">Send Rx to Pharmacy</button>
+          <button class="btn ghost" type="button" id="btnCreateLab">Create Lab Order</button>
+          <button class="btn ghost" type="button" id="btnPrintLast">Print Last Visit</button>
+          <a class="btn ghost" href="./patients-history.html">Open Patient History</a>
+        </div>
+      </form>
+    </div>
+
+    <!-- Right: Vitals + Advice + Vaccination -->
+    <div class="panel">
+      <div class="cardlite gradient-amber">
+        <h3 style="margin:0 0 8px">Vitals</h3>
+        <div class="kpis">
+          <div class="kpi">
+            <div class="label">BMI</div>
+            <div class="value" id="bmi">—</div>
+          </div>
+          <div class="kpi">
+            <div class="label">BSA</div>
+            <div class="value" id="bsa">—</div>
+          </div>
+        </div>
+        <div class="muted small">Age: <b><span id="ageYM">—</span></b></div>
+      </div>
+
+      <div class="cardlite gradient-teal">
+        <h3 style="margin:0 0 8px">Growth</h3>
+        <div class="row row-gap" style="align-items:center">
+          <div id="growthStatus" class="status">—</div>
+          <div class="muted small" style="margin-left:auto">basis: <span id="growthBasis"></span></div>
+        </div>
+        <div id="growthTip" class="muted" style="margin-top:6px"></div>
+      </div>
+
+      <div class="cardlite gradient-violet">
+        <h3 style="margin:0 0 8px">Vaccination Recommendation</h3>
+        <div class="muted small">Age-based helper (dose history not yet wired).</div>
+        <div style="display:grid;gap:8px;margin-top:6px">
+          <div style="background:#fef9c3;border:1px dashed #eab308;padding:8px;border-radius:10px">
+            <div class="muted small">Due now:</div>
+            <div id="vaxDue"></div>
+          </div>
+          <div style="background:#f3f4f6;border:1px dashed #9ca3af;padding:8px;border-radius:10px">
+            <div class="muted small">Upcoming next:</div>
+            <div id="vaxNext"></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+</body>
+</html>

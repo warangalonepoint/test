@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Dashboard · Clinic PWA</title>
+<link rel="stylesheet" href="./styles/styles.css"/>
+<link rel="stylesheet" href="./styles/pastels.css?v=4"/>
+<script defer src="https://cdn.jsdelivr.net/npm/dexie@4.0.8/dist/dexie.min.js"></script>
+<script type="module">
+import { seed } from './scripts/db.js';
+import { mountNav } from './scripts/ui.js';
+seed();
+window.addEventListener('DOMContentLoaded', ()=>{
+  mountNav('dashboard');
+  document.getElementById('btnBack')?.addEventListener('click', ()=> history.length>1 ? history.back() : (window.location.href='index.html'));
+});
+</script>
+<style>
+:root{ --brand:#F59E0B }
+.wrap.grid{gap:12px}
+</style>
+</head>
+<body>
+<div id="nav"></div>
+
+<div class="wrap grid">
+  <div class="header-row" style="padding:4px 2px">
+    <button id="btnBack" class="btn ghost">← Back</button>
+    <div class="sp"></div>
+    <a class="btn ghost" href="./settings.html">Settings</a>
+  </div>
+
+  <div class="tiles">
+    <a class="tile gradient g-lav" href="./bookings.html">
+      <h3>Bookings & Intake</h3><p>Schedule · reminders · tokens</p>
+    </a>
+    <a class="tile gradient g-pink" href="./opd.html">
+      <h3>OPD</h3><p>Complaints · Rx · Lab · Print</p>
+    </a>
+    <a class="tile gradient g-amber" href="./patients.html">
+      <h3>Patients</h3><p>Profiles · history · quick OPD</p>
+    </a>
+
+    <a class="tile gradient g-teal" href="./pharmacy-queue.html">
+      <h3>Pharmacy Queue</h3><p>Dispense prescriptions</p>
+    </a>
+    <a class="tile gradient g-violet" href="./pharmacy-sales.html">
+      <h3>Pharmacy POS</h3><p>Counter/Queue sales · Returns</p>
+    </a>
+    <a class="tile gradient g-lav" href="./pharmacy.html">
+      <h3>Pharmacy</h3><p>Inventory · FEFO · Reports</p>
+    </a>
+
+    <a class="tile gradient g-amber" href="./lab.html">
+      <h3>Lab</h3><p>Orders · billing · results</p>
+    </a>
+    <a class="tile gradient g-pink" href="./pages/gst-report.html">
+      <h3>GST Report</h3><p>Monthly taxable · SGST/CGST</p>
+    </a>
+    <a class="tile gradient g-teal" href="./backup.html">
+      <h3>Backup / Restore</h3><p>Export JSON · Import/Merge</p>
+    </a>
+
+    <a class="tile gradient g-violet" href="./settings.html">
+      <h3>Settings</h3><p>Clinic · theme · logo · PINs</p>
+    </a>
+  </div>
+</div>
+</body>
+</html>
