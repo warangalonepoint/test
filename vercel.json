@@ -1,14 +1,31 @@
 {
   "version": 2,
   "builds": [
-    { "src": "*.html", "use": "@vercel/static" },
-    { "src": "data/**/*", "use": "@vercel/static" },
-    { "src": "scripts/**/*", "use": "@vercel/static" },
-    { "src": "styles/**/*", "use": "@vercel/static" },
-    { "src": "public/**/*", "use": "@vercel/static" }
+    { "src": "**/*", "use": "@vercel/static" }
+  ],
+  "cleanUrls": false,
+  "trailingSlash": false,
+  "headers": [
+    { "source": "/(.*)\\.(css|js|png|jpg|svg|woff2)",
+      "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }]
+    }
   ],
   "routes": [
-    { "src": "/(.*)", "dest": "/index.html" }
+    { "src": "^/$", "dest": "/index.html" },
+
+    /* ---- Case/slug fixes without touching pages ---- */
+    { "src": "^/opd(?:\\.html)?$", "dest": "/OPD.html" },
+
+    { "src": "^/pharmacy-sale(?:\\.html)?$", "dest": "/pharmacy-sales.html" },
+
+    /* If you ever linked these without .html */
+    { "src": "^/dashboard$", "dest": "/dashboard.html" },
+    { "src": "^/bookings$", "dest": "/bookings.html" },
+    { "src": "^/patients$", "dest": "/patients.html" },
+    { "src": "^/pharmacy$", "dest": "/pharmacy.html" },
+    { "src": "^/pharmacy-queue$", "dest": "/pharmacy-queue.html" },
+    { "src": "^/lab$", "dest": "/lab.html" },
+    { "src": "^/lab-hub$", "dest": "/lab-hub.html" },
+    { "src": "^/backup$", "dest": "/backup.html" }
   ]
 }
-
